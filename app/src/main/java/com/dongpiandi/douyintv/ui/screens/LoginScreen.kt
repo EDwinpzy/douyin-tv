@@ -89,7 +89,6 @@ fun LoginScreen(
             settings.apply {
                 javaScriptEnabled = true
                 domStorageEnabled = true
-                databaseEnabled = true
                 loadsImagesAutomatically = true
                 userAgentString = DouyinApi.USER_AGENT
                 useWideViewPort = true
@@ -190,7 +189,7 @@ fun LoginScreen(
 
     LaunchedEffect(webView, probeGeneration) {
         delay(1_500)
-        repeat(60) { attempt ->
+        repeat(90) { attempt ->
             if (!isActive || handled || qrVisible) return@LaunchedEffect
             val result = webView.evaluateJavascriptSuspend(LOGIN_PROBE_JS)
             if (result.contains("qr", ignoreCase = true)) {
@@ -199,7 +198,7 @@ fun LoginScreen(
                 error = null
                 return@LaunchedEffect
             }
-            if (attempt >= 59) {
+            if (attempt >= 89) {
                 error = "二维码未出现，请点击“重新显示二维码”"
             }
             delay(1_000)
@@ -286,7 +285,7 @@ private fun LoginRail(
     val statusText = when {
         error != null -> error
         loading -> "正在打开登录页"
-        qrVisible -> "二维码已显示，等待手机确认"
+        qrVisible -> "二维码已显示\n等待手机确认"
         else -> "正在唤起二维码"
     }
     val statusColor = when {
@@ -528,6 +527,18 @@ private const val FIT_LOGIN_MODAL_JS = """
         }
         node = node.parentElement;
       }
+      const modalRect = modal.getBoundingClientRect();
+      if (modalRect.height > 0) {
+        const desiredTop = Math.max(
+          0,
+          Math.round((viewportHeight - modalRect.height) / 2)
+        );
+        const currentMargin = parseFloat(modal.style.marginTop) || 0;
+        const shift = Math.round(desiredTop - modalRect.top);
+        if (Math.abs(shift) > 2) {
+          modal.style.marginTop = (currentMargin + shift) + 'px';
+        }
+      }
       return 'fitted';
     })();
 """
@@ -556,6 +567,18 @@ private const val LOGIN_MODAL_FIT_JS = """
             node.style.setProperty('min-height', viewportHeight + 'px', 'important');
           }
           node = node.parentElement;
+        }
+        const modalRect = modal.getBoundingClientRect();
+        if (modalRect.height > 0) {
+          const desiredTop = Math.max(
+            0,
+            Math.round((viewportHeight - modalRect.height) / 2)
+          );
+          const currentMargin = parseFloat(modal.style.marginTop) || 0;
+          const shift = Math.round(desiredTop - modalRect.top);
+          if (Math.abs(shift) > 2) {
+            modal.style.marginTop = (currentMargin + shift) + 'px';
+          }
         }
       };
       globalThis.__douyinTvFitLoginModal = fit;
