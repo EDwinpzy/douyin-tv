@@ -36,6 +36,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
@@ -53,15 +54,12 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
-import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import com.dongpiandi.douyintv.model.ShortVideo
-import com.dongpiandi.douyintv.network.DouyinMediaSourceFactory
 import com.dongpiandi.douyintv.ui.MainTab
 import com.dongpiandi.douyintv.ui.EngagementUiState
 import com.dongpiandi.douyintv.ui.ShortsUiState
@@ -76,6 +74,7 @@ import com.dongpiandi.douyintv.ui.theme.TextSecondary
 import kotlinx.coroutines.delay
 
 private const val OVERLAY_AUTO_HIDE_DELAY_MS = 4_000L
+private const val DANMAKU_HEIGHT_FRACTION = 0.25f
 
 @Composable
 fun ShortsScreen(
@@ -107,22 +106,13 @@ fun ShortsScreen(
     val retryFocusRequester = remember { FocusRequester() }
     var focusChromeRequested by remember { mutableStateOf(false) }
     var autoHideEpoch by remember { mutableIntStateOf(0) }
-    val player = remember {
-        ExoPlayer.Builder(context)
-            .setMediaSourceFactory(
-                DouyinMediaSourceFactory.create(
-                    context = context,
-                    referer = "https://www.douyin.com/",
-                ),
-            )
-            .build()
-            .apply {
-                setHandleAudioBecomingNoisy(true)
-            }
-    }
+    var videoFocused by remember { mutableStateOf(false) }
+    val playbackEngine = remember { ShortsPlaybackEngine(context) }
+    val player = playbackEngine.player
     val current = state.current
     var urlIndex by remember(current?.id) { mutableIntStateOf(0) }
     var buffering by remember { mutableStateOf(true) }
+    var readyVideoId by remember { mutableStateOf<String?>(null) }
     val latestVideo by rememberUpdatedState(current)
     val latestUrlIndex by rememberUpdatedState(urlIndex)
     val latestPaused by rememberUpdatedState(state.paused)
@@ -135,6 +125,9 @@ fun ShortsScreen(
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 buffering = playbackState == Player.STATE_BUFFERING
+                if (playbackState == Player.STATE_READY) {
+                    readyVideoId = latestVideo?.id
+                }
                 if (playbackState == Player.STATE_ENDED) {
                     latestOnEnded()
                 }
@@ -153,7 +146,7 @@ fun ShortsScreen(
         player.addListener(listener)
         onDispose {
             player.removeListener(listener)
-            player.release()
+            playbackEngine.release()
         }
     }
 
@@ -169,16 +162,24 @@ fun ShortsScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    LaunchedEffect(activeUrl) {
+    LaunchedEffect(current?.id, activeUrl) {
         if (activeUrl.isNullOrBlank()) {
             player.stop()
             player.clearMediaItems()
             return@LaunchedEffect
         }
+        val video = current ?: return@LaunchedEffect
         buffering = true
-        player.setMediaItem(MediaItem.fromUri(activeUrl))
+        readyVideoId = null
+        playbackEngine.prepare(video, urlIndex)
         player.prepare()
         player.playWhenReady = !state.paused
+    }
+
+    LaunchedEffect(state.videos, state.index, readyVideoId) {
+        if (readyVideoId == current?.id) {
+            playbackEngine.updatePreloadWindow(state.videos, state.index)
+        }
     }
 
     LaunchedEffect(state.paused) {
@@ -197,6 +198,14 @@ fun ShortsScreen(
 
     LaunchedEffect(commentsVisible) {
         if (!commentsVisible) {
+            withFrameNanos { }
+            focusManager.clearFocus(force = true)
+            videoFocusRequester.requestFocus()
+        }
+    }
+
+    LaunchedEffect(overlayVisible, current?.id) {
+        if (!overlayVisible && current != null && !commentsVisible) {
             withFrameNanos { }
             focusManager.clearFocus(force = true)
             videoFocusRequester.requestFocus()
@@ -225,8 +234,18 @@ fun ShortsScreen(
         videoFocusRequester.requestFocus()
     }
 
-    LaunchedEffect(overlayVisible, focusChromeRequested, commentsVisible) {
-        if (overlayVisible && focusChromeRequested && !commentsVisible) {
+    LaunchedEffect(
+        overlayVisible,
+        focusChromeRequested,
+        commentsVisible,
+    ) {
+        if (
+            overlayVisible &&
+            focusChromeRequested &&
+            !commentsVisible
+        ) {
+            withFrameNanos { }
+            delay(16)
             chromeFocusRequester.requestFocus()
             focusChromeRequested = false
         }
@@ -241,16 +260,16 @@ fun ShortsScreen(
             .fillMaxSize()
             .background(Color.Black),
     ) {
-        val infoWidth = if (maxWidth < 700.dp) {
-            maxWidth * 0.50f
-        } else {
-            (maxWidth * 0.55f).coerceAtMost(440.dp)
-        }
+        val infoWidth = (maxWidth * 0.28f).coerceAtMost(280.dp)
+        val danmakuHeight = (maxHeight * DANMAKU_HEIGHT_FRACTION)
+            .coerceAtLeast(96.dp)
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .focusRequester(videoFocusRequester)
+                .onFocusChanged { videoFocused = it.isFocused }
                 .onPreviewKeyEvent { event ->
+                    if (!videoFocused) return@onPreviewKeyEvent false
                     if (state.error != null) return@onPreviewKeyEvent false
                     val handled = event.key == Key.DirectionUp ||
                         event.key == Key.DirectionDown ||
@@ -266,30 +285,45 @@ fun ShortsScreen(
                     if (!handled) return@onPreviewKeyEvent false
                     if (event.nativeKeyEvent.repeatCount > 0) return@onPreviewKeyEvent true
 
-                    onShowOverlay()
-                    autoHideEpoch++
                     when (event.key) {
                         Key.DirectionUp -> {
                             if (state.index > 0) {
+                                onHideOverlay()
                                 onPrevious()
                             } else {
+                                onShowOverlay()
+                                autoHideEpoch++
                                 focusChromeRequested = true
                             }
                         }
 
-                        Key.DirectionDown -> onNext()
+                        Key.DirectionDown -> {
+                            onHideOverlay()
+                            onNext()
+                        }
                         Key.DirectionLeft -> {
+                            onShowOverlay()
+                            autoHideEpoch++
                             player.seekTo((player.currentPosition - 5_000).coerceAtLeast(0))
                         }
 
                         Key.DirectionRight -> {
+                            onShowOverlay()
+                            autoHideEpoch++
                             player.seekTo(player.currentPosition + 5_000)
                         }
 
-                        Key.DirectionCenter, Key.Enter, Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause ->
+                        Key.DirectionCenter, Key.Enter, Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause -> {
+                            onShowOverlay()
+                            autoHideEpoch++
                             onTogglePause()
+                        }
 
-                        Key.Menu -> focusChromeRequested = true
+                        Key.Menu -> {
+                            onShowOverlay()
+                            autoHideEpoch++
+                            focusChromeRequested = true
+                        }
                         else -> Unit
                     }
                     true
@@ -338,7 +372,8 @@ fun ShortsScreen(
                 player = player,
                 modifier = Modifier
                     .align(Alignment.TopCenter)
-                    .padding(top = 82.dp),
+                    .padding(top = 82.dp)
+                    .height(danmakuHeight),
             )
         }
 
@@ -362,7 +397,11 @@ fun ShortsScreen(
             }
         }
 
-        if (current != null && overlayVisible && !commentsVisible) {
+        if (
+            current != null &&
+            overlayVisible &&
+            !commentsVisible
+        ) {
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -432,6 +471,7 @@ fun ShortsScreen(
                 onLoadMore = { onLoadMoreComments(current) },
             )
         }
+
     }
 }
 

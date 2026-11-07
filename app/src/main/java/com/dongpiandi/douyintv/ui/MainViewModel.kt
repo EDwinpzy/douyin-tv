@@ -185,7 +185,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { current ->
             val shouldResume = current.engagement.resumeOnClose
             current.copy(
-                overlayVisible = false,
                 shorts = current.shorts.copy(
                     paused = if (shouldResume) false else current.shorts.paused,
                 ),
