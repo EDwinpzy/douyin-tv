@@ -49,6 +49,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.dongpiandi.douyintv.model.ShortComment
@@ -60,6 +61,12 @@ import com.dongpiandi.douyintv.ui.theme.PanelRaised
 import com.dongpiandi.douyintv.ui.theme.TextPrimary
 import com.dongpiandi.douyintv.ui.theme.TextSecondary
 import kotlinx.coroutines.delay
+
+internal fun commentsPanelWidth(screenWidth: Dp): Dp = if (screenWidth < 1_100.dp) {
+    screenWidth * 0.55f
+} else {
+    (screenWidth * 0.4f).coerceAtMost(820.dp)
+}
 
 @Composable
 fun CommentsPanel(
@@ -113,11 +120,7 @@ fun CommentsPanel(
             .fillMaxSize()
             .background(Color.Black.copy(alpha = 0.48f)),
     ) {
-        val panelWidth = if (maxWidth < 1_100.dp) {
-            maxWidth * 0.55f
-        } else {
-            (maxWidth * 0.4f).coerceAtMost(820.dp)
-        }
+        val panelWidth = commentsPanelWidth(maxWidth)
 
         Row(
             modifier = Modifier.fillMaxSize(),
