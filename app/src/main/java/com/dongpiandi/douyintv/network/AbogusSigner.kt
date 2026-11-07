@@ -5,8 +5,9 @@ import java.util.concurrent.ThreadLocalRandom
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Kotlin port of the MIT-licensed abogus signer by sobird.
- * See THIRD_PARTY_NOTICES.md for attribution.
+ * Kotlin adaptation of abogus 2.1.1 by sobird, licensed under MIT.
+ * Upstream: https://github.com/sobird/abogus
+ * See THIRD_PARTY_NOTICES.md for the full attribution and license text.
  */
 class AbogusSigner(
     private val nowProvider: () -> Long = System::currentTimeMillis,
