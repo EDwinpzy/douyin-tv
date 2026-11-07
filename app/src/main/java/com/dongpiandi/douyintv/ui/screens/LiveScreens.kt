@@ -9,6 +9,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -157,14 +158,15 @@ fun LiveGridScreen(
         }
         Spacer(Modifier.height(4.dp))
 
-        Box(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(horizontal = 30.dp),
         ) {
+            val columnCount = if (maxWidth >= 800.dp) 4 else 3
             if (state.rooms.isNotEmpty()) {
                 LazyVerticalGrid(
-                    columns = GridCells.Fixed(3),
+                    columns = GridCells.Fixed(columnCount),
                     state = gridState,
                     contentPadding = PaddingValues(bottom = 30.dp, top = 4.dp),
                     horizontalArrangement = Arrangement.spacedBy(18.dp),
