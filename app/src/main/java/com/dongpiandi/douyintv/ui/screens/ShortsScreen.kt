@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -15,7 +16,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -187,11 +187,16 @@ fun ShortsScreen(
         if (state.error != null) retryFocusRequester.requestFocus()
     }
 
-    Box(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black),
     ) {
+        val infoWidth = if (maxWidth < 700.dp) {
+            maxWidth * 0.50f
+        } else {
+            (maxWidth * 0.55f).coerceAtMost(440.dp)
+        }
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -302,23 +307,20 @@ fun ShortsScreen(
                         ),
                     ),
             )
-            ShortVideoInfo(
-                video = current,
-                paused = state.paused,
+            Row(
                 modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .fillMaxWidth(0.55f)
-                    .widthIn(max = 440.dp)
-                    .padding(start = 30.dp, bottom = 28.dp),
-            )
-            if (overlayVisible) {
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(end = 30.dp, bottom = 28.dp),
-                    horizontalAlignment = Alignment.End,
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(start = 30.dp, end = 30.dp, bottom = 28.dp),
+                verticalAlignment = Alignment.Bottom,
+            ) {
+                ShortVideoInfo(
+                    video = current,
+                    paused = state.paused,
+                    modifier = Modifier.width(infoWidth),
+                )
+                Spacer(Modifier.weight(1f))
+                if (overlayVisible) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         HudHint("↑↓ 切换")
                         HudHint("OK 暂停")
