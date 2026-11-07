@@ -1,0 +1,22 @@
+# Android / Gradle
+.gradle/
+.kotlin/
+**/build/
+local.properties
+*.apk
+*.aab
+*.jks
+*.keystore
+keystore.properties
+*.hprof
+
+# Generated and local research data
+captures/
+research/
+screenshots/
+*.log
+
+# IDE
+.idea/
+*.iml
+.DS_Store
