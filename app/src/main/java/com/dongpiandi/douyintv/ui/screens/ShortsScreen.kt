@@ -2,6 +2,8 @@
 
 package com.dongpiandi.douyintv.ui.screens
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
@@ -9,6 +11,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -32,10 +35,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -59,11 +62,14 @@ import androidx.media3.common.Player
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
+import coil.imageLoader
+import coil.request.ImageRequest
 import com.dongpiandi.douyintv.model.ShortVideo
 import com.dongpiandi.douyintv.ui.MainTab
 import com.dongpiandi.douyintv.ui.EngagementUiState
 import com.dongpiandi.douyintv.ui.ShortsUiState
 import com.dongpiandi.douyintv.ui.components.CommentsPanel
+import com.dongpiandi.douyintv.ui.components.commentsPanelWidth
 import com.dongpiandi.douyintv.ui.components.DanmakuOverlay
 import com.dongpiandi.douyintv.ui.components.TopChrome
 import com.dongpiandi.douyintv.ui.formatCount
@@ -75,6 +81,9 @@ import kotlinx.coroutines.delay
 
 private const val OVERLAY_AUTO_HIDE_DELAY_MS = 4_000L
 private const val DANMAKU_HEIGHT_FRACTION = 0.25f
+
+private fun coverCacheKey(videoId: String, coverUrl: String): String =
+    "short-cover:$videoId:${coverUrl.hashCode()}"
 
 @Composable
 fun ShortsScreen(
@@ -111,11 +120,12 @@ fun ShortsScreen(
     val player = playbackEngine.player
     val current = state.current
     var urlIndex by remember(current?.id) { mutableIntStateOf(0) }
-    var buffering by remember { mutableStateOf(true) }
     var readyVideoId by remember { mutableStateOf<String?>(null) }
+    var renderedVideoId by remember { mutableStateOf<String?>(null) }
     val latestVideo by rememberUpdatedState(current)
     val latestUrlIndex by rememberUpdatedState(urlIndex)
     val latestPaused by rememberUpdatedState(state.paused)
+    val imageLoader = context.imageLoader
     val latestOnEnded by rememberUpdatedState(onEnded)
     val latestOnError by rememberUpdatedState(onPlaybackError)
     val activeUrl = current?.playUrls?.getOrNull(urlIndex)
@@ -124,13 +134,16 @@ fun ShortsScreen(
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
-                buffering = playbackState == Player.STATE_BUFFERING
                 if (playbackState == Player.STATE_READY) {
                     readyVideoId = latestVideo?.id
                 }
                 if (playbackState == Player.STATE_ENDED) {
                     latestOnEnded()
                 }
+            }
+
+            override fun onRenderedFirstFrame() {
+                renderedVideoId = latestVideo?.id
             }
 
             override fun onPlayerError(error: PlaybackException) {
@@ -169,8 +182,8 @@ fun ShortsScreen(
             return@LaunchedEffect
         }
         val video = current ?: return@LaunchedEffect
-        buffering = true
         readyVideoId = null
+        renderedVideoId = null
         playbackEngine.prepare(video, urlIndex)
         player.prepare()
         player.playWhenReady = !state.paused
@@ -179,6 +192,19 @@ fun ShortsScreen(
     LaunchedEffect(state.videos, state.index, readyVideoId) {
         if (readyVideoId == current?.id) {
             playbackEngine.updatePreloadWindow(state.videos, state.index)
+        }
+    }
+
+    LaunchedEffect(state.videos, state.index) {
+        ShortsPreloadPolicy.retainedIndices(state.index, state.videos.size).forEach {
+            val video = state.videos.getOrNull(it) ?: return@forEach
+            val coverUrl = video.coverUrl ?: return@forEach
+            imageLoader.enqueue(
+                ImageRequest.Builder(context)
+                    .data(coverUrl)
+                    .memoryCacheKey(coverCacheKey(video.id, coverUrl))
+                    .build(),
+            )
         }
     }
 
@@ -255,14 +281,56 @@ fun ShortsScreen(
         if (state.error != null) retryFocusRequester.requestFocus()
     }
 
+    val posterAlpha by animateFloatAsState(
+        targetValue = if (current != null && renderedVideoId == current.id) 0f else 1f,
+        animationSpec = tween(durationMillis = 180),
+        label = "videoPosterAlpha",
+    )
+    val coverRequest = remember(current?.id, current?.coverUrl) {
+        current?.coverUrl?.let { coverUrl ->
+            ImageRequest.Builder(context)
+                .data(coverUrl)
+                .memoryCacheKey(coverCacheKey(current.id, coverUrl))
+                .build()
+        }
+    }
+
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black),
+            .background(Color.Black)
+            .onPreviewKeyEvent { event ->
+                val seekKey = event.key == Key.DirectionLeft ||
+                    event.key == Key.DirectionRight
+                if (!seekKey || commentsVisible || current == null || state.error != null) {
+                    return@onPreviewKeyEvent false
+                }
+                if (event.type == KeyEventType.KeyUp) return@onPreviewKeyEvent true
+                if (event.nativeKeyEvent.repeatCount == 0) {
+                    onShowOverlay()
+                    autoHideEpoch++
+                    val delta = if (event.key == Key.DirectionLeft) -5_000L else 5_000L
+                    val maxPosition = player.duration.takeIf { it > 0L } ?: Long.MAX_VALUE
+                    player.seekTo(
+                        (player.currentPosition + delta).coerceIn(0L, maxPosition),
+                    )
+                }
+                true
+            },
     ) {
         val infoWidth = (maxWidth * 0.28f).coerceAtMost(280.dp)
         val danmakuHeight = (maxHeight * DANMAKU_HEIGHT_FRACTION)
             .coerceAtLeast(96.dp)
+        val commentsWidth = commentsPanelWidth(maxWidth)
+        val videoAreaModifier = if (commentsVisible) {
+            Modifier
+                .fillMaxHeight()
+                .width((maxWidth - commentsWidth).coerceAtLeast(1.dp))
+                .align(Alignment.CenterStart)
+        } else {
+            Modifier.fillMaxSize()
+        }
+
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -273,8 +341,6 @@ fun ShortsScreen(
                     if (state.error != null) return@onPreviewKeyEvent false
                     val handled = event.key == Key.DirectionUp ||
                         event.key == Key.DirectionDown ||
-                        event.key == Key.DirectionLeft ||
-                        event.key == Key.DirectionRight ||
                         event.key == Key.DirectionCenter ||
                         event.key == Key.Enter ||
                         event.key == Key.Menu ||
@@ -301,18 +367,6 @@ fun ShortsScreen(
                             onHideOverlay()
                             onNext()
                         }
-                        Key.DirectionLeft -> {
-                            onShowOverlay()
-                            autoHideEpoch++
-                            player.seekTo((player.currentPosition - 5_000).coerceAtLeast(0))
-                        }
-
-                        Key.DirectionRight -> {
-                            onShowOverlay()
-                            autoHideEpoch++
-                            player.seekTo(player.currentPosition + 5_000)
-                        }
-
                         Key.DirectionCenter, Key.Enter, Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause -> {
                             onShowOverlay()
                             autoHideEpoch++
@@ -330,11 +384,11 @@ fun ShortsScreen(
                 }
                 .focusable(enabled = !commentsVisible),
         )
-        current?.coverUrl?.let { cover ->
+        coverRequest?.let { cover ->
             AsyncImage(
                 model = cover,
                 contentDescription = null,
-                modifier = Modifier.fillMaxSize(),
+                modifier = videoAreaModifier,
                 contentScale = ContentScale.Crop,
                 alpha = 0.24f,
             )
@@ -362,8 +416,16 @@ fun ShortsScreen(
                     }
                 },
                 update = { view -> view.player = player },
-                modifier = Modifier.fillMaxSize(),
+                modifier = videoAreaModifier,
             )
+            coverRequest?.let { cover ->
+                AsyncImage(
+                    model = cover,
+                    contentDescription = null,
+                    modifier = videoAreaModifier.alpha(posterAlpha),
+                    contentScale = ContentScale.Fit,
+                )
+            }
         }
 
         if (current != null && !commentsVisible) {
@@ -426,16 +488,6 @@ fun ShortsScreen(
                     modifier = Modifier.width(infoWidth),
                 )
             }
-        }
-
-        if (buffering && current != null && state.error == null) {
-            CircularProgressIndicator(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .size(46.dp),
-                color = FocusRing,
-                strokeWidth = 4.dp,
-            )
         }
 
         if (current == null && state.loading) {

@@ -208,8 +208,10 @@ private fun GlassPill(
                 focused = it.isFocused
             }
             .onPreviewKeyEvent { event ->
-                val isHorizontalKey =
-                    event.key == Key.DirectionLeft || event.key == Key.DirectionRight
+                val isMenuKey = event.key == Key.DirectionLeft ||
+                    event.key == Key.DirectionRight ||
+                    event.key == Key.DirectionUp ||
+                    event.key == Key.DirectionDown
                 when {
                     event.type == KeyEventType.KeyDown -> {
                         onUserInteraction?.invoke()
@@ -224,6 +226,16 @@ private fun GlassPill(
                                 true
                             }
 
+                            Key.DirectionUp -> {
+                                nextFocusRequester?.requestFocus()
+                                true
+                            }
+
+                            Key.DirectionDown -> {
+                                previousFocusRequester?.requestFocus()
+                                true
+                            }
+
                             Key.DirectionCenter, Key.Enter -> {
                                 if (event.nativeKeyEvent.repeatCount == 0) onClick()
                                 true
@@ -232,7 +244,7 @@ private fun GlassPill(
                             else -> false
                         }
                     }
-                    isHorizontalKey || event.key == Key.DirectionCenter || event.key == Key.Enter -> {
+                    isMenuKey || event.key == Key.DirectionCenter || event.key == Key.Enter -> {
                         true
                     }
 

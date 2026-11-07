@@ -114,6 +114,11 @@ fun LoginScreen(
                     LOGIN_MODAL_FIT_JS,
                     setOf("*"),
                 )
+                WebViewCompat.addDocumentStartJavaScript(
+                    this,
+                    AUTO_OPEN_LOGIN_JS,
+                    setOf("*"),
+                )
             }
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
             webChromeClient = object : WebChromeClient() {
@@ -130,8 +135,13 @@ fun LoginScreen(
                     error = null
                 }
 
+                override fun onPageCommitVisible(view: WebView?, url: String?) {
+                    view?.evaluateJavascript(AUTO_OPEN_LOGIN_JS, null)
+                }
+
                 override fun onPageFinished(view: WebView?, url: String?) {
                     loading = false
+                    view?.evaluateJavascript(AUTO_OPEN_LOGIN_JS, null)
                 }
 
                 override fun onReceivedError(
@@ -189,7 +199,7 @@ fun LoginScreen(
 
     LaunchedEffect(webView, probeGeneration) {
         delay(1_500)
-        repeat(90) { attempt ->
+        repeat(45) { attempt ->
             if (!isActive || handled || qrVisible) return@LaunchedEffect
             val result = webView.evaluateJavascriptSuspend(LOGIN_PROBE_JS)
             if (result.contains("qr", ignoreCase = true)) {
@@ -198,7 +208,7 @@ fun LoginScreen(
                 error = null
                 return@LaunchedEffect
             }
-            if (attempt >= 89) {
+            if (attempt >= 44) {
                 error = "二维码未出现，请点击“重新显示二维码”"
             }
             delay(1_000)
@@ -445,6 +455,16 @@ private suspend fun WebView.evaluateJavascriptSuspend(script: String): String =
 
 private const val LOGIN_PROBE_JS = """
     (function () {
+      const bodyText = (document.body?.innerText || '').replace(/\s+/g, '');
+      const isSsoLogin = location.hostname === 'sso.douyin.com' ||
+        location.hostname === 'login.douyin.com';
+      if (
+        isSsoLogin &&
+        document.readyState === 'complete' &&
+        (bodyText.includes('扫码登录') || bodyText.includes('已验证码登录'))
+      ) {
+        return 'qr';
+      }
       const visible = (el) => {
         const rect = el.getBoundingClientRect();
         const style = getComputedStyle(el);
@@ -457,41 +477,6 @@ private const val LOGIN_PROBE_JS = """
       const qr = document.querySelector('#douyin_login_comp_scan_code_qrcode');
       if (modal && qr && visible(qr)) return 'qr';
       if (modal) return 'qr';
-      const buttons = Array.from(document.querySelectorAll('button.semi-button, button'));
-      let login = buttons.find((el) => {
-        const text = (el.innerText || '').replace(/\s+/g, '').trim();
-        return visible(el) && !el.disabled && text === '登录';
-      });
-      if (!login) {
-        login = Array.from(document.querySelectorAll('a, div, span')).find((el) => {
-          const text = (el.innerText || '').replace(/\s+/g, '').trim();
-          return visible(el) && text === '登录';
-        });
-      }
-      if (login) {
-        const rect = login.getBoundingClientRect();
-        const init = {
-          bubbles: true,
-          cancelable: true,
-          composed: true,
-          view: window,
-          clientX: rect.left + rect.width / 2,
-          clientY: rect.top + rect.height / 2,
-          button: 0,
-          buttons: 1,
-        };
-        try { login.focus({ preventScroll: true }); } catch (_) {}
-        ['pointerover', 'pointerenter', 'pointerdown', 'mousedown'].forEach((type) => {
-          const EventType = type.startsWith('pointer') ? PointerEvent : MouseEvent;
-          login.dispatchEvent(new EventType(type, init));
-        });
-        init.buttons = 0;
-        ['pointerup', 'mouseup', 'click'].forEach((type) => {
-          const EventType = type.startsWith('pointer') ? PointerEvent : MouseEvent;
-          login.dispatchEvent(new EventType(type, init));
-        });
-        return 'clicked';
-      }
       const accountEntry = Array.from(
         document.querySelectorAll('a, div, span')
       ).find((el) => {
@@ -540,6 +525,62 @@ private const val FIT_LOGIN_MODAL_JS = """
         }
       }
       return 'fitted';
+    })();
+"""
+
+private const val AUTO_OPEN_LOGIN_JS = """
+    (() => {
+      const visible = (el) => {
+        const rect = el.getBoundingClientRect();
+        const style = getComputedStyle(el);
+        return rect.width > 0 &&
+          rect.height > 0 &&
+          style.display !== 'none' &&
+          style.visibility !== 'hidden';
+      };
+      const loginButton = () => {
+        const candidates = Array.from(
+          document.querySelectorAll('button.semi-button.semi-button-primary, button')
+        );
+        return candidates.find((el) => {
+          const text = (el.innerText || '').replace(/\s+/g, '').trim();
+          const rect = el.getBoundingClientRect();
+          return text === '登录' &&
+            !el.disabled &&
+            visible(el) &&
+            rect.width >= 36 &&
+            rect.height >= 20 &&
+            rect.top >= 0 &&
+            rect.top < Math.max(180, window.innerHeight * 0.18);
+        }) || null;
+      };
+      const stop = () => {
+        clearInterval(globalThis.__douyinTvAutoLoginTimer);
+        globalThis.__douyinTvAutoLoginTimer = null;
+      };
+      const clickLogin = () => {
+        const modal = Array.from(
+          document.querySelectorAll('.douyin_login_new_class')
+        ).find(visible);
+        if (modal) {
+          stop();
+          return;
+        }
+        const button = loginButton();
+        if (!button) return;
+        const hydrated = Object.keys(button).some((key) =>
+          key.startsWith('__reactProps$')
+        ) || typeof button.onclick === 'function';
+        if (!hydrated) return;
+        const now = Date.now();
+        if (now - (globalThis.__douyinTvAutoLoginLastClick || 0) < 1_800) return;
+        globalThis.__douyinTvAutoLoginLastClick = now;
+        try { button.click(); } catch (_) {}
+      };
+      if (!globalThis.__douyinTvAutoLoginTimer) {
+        globalThis.__douyinTvAutoLoginTimer = setInterval(clickLogin, 750);
+      }
+      clickLogin();
     })();
 """
 
