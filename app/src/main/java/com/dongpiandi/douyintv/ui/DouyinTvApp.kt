@@ -100,6 +100,7 @@ fun DouyinTvApp(viewModel: MainViewModel) {
                         if (state.isLoggedIn) viewModel.showAccountMenu() else viewModel.openLogin()
                     },
                     onShowOverlay = viewModel::showOverlay,
+                    onHideOverlay = viewModel::hideOverlay,
                     onPrevious = viewModel::previousShort,
                     onNext = viewModel::nextShort,
                     onTogglePause = viewModel::toggleShortPause,

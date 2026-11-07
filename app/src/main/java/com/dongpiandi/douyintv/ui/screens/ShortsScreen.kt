@@ -70,6 +70,9 @@ import com.dongpiandi.douyintv.ui.theme.FocusRing
 import com.dongpiandi.douyintv.ui.theme.Panel
 import com.dongpiandi.douyintv.ui.theme.TextPrimary
 import com.dongpiandi.douyintv.ui.theme.TextSecondary
+import kotlinx.coroutines.delay
+
+private const val OVERLAY_AUTO_HIDE_DELAY_MS = 4_000L
 
 @Composable
 fun ShortsScreen(
@@ -79,6 +82,7 @@ fun ShortsScreen(
     onSelectTab: (MainTab) -> Unit,
     onAccountClick: () -> Unit,
     onShowOverlay: () -> Unit,
+    onHideOverlay: () -> Unit,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onTogglePause: () -> Unit,
@@ -92,6 +96,8 @@ fun ShortsScreen(
     val chromeFocusRequester = remember { FocusRequester() }
     val retryFocusRequester = remember { FocusRequester() }
     var focusChromeRequested by remember { mutableStateOf(false) }
+    var videoFocused by remember { mutableStateOf(false) }
+    var autoHideEpoch by remember { mutableIntStateOf(0) }
     val player = remember {
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(
@@ -176,6 +182,20 @@ fun ShortsScreen(
         }
     }
 
+    LaunchedEffect(
+        overlayVisible,
+        current?.id,
+        videoFocused,
+        state.paused,
+        autoHideEpoch,
+    ) {
+        if (!overlayVisible || current == null || !videoFocused || state.paused) {
+            return@LaunchedEffect
+        }
+        delay(OVERLAY_AUTO_HIDE_DELAY_MS)
+        onHideOverlay()
+    }
+
     LaunchedEffect(overlayVisible, focusChromeRequested) {
         if (overlayVisible && focusChromeRequested) {
             chromeFocusRequester.requestFocus()
@@ -201,6 +221,7 @@ fun ShortsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .focusRequester(videoFocusRequester)
+                .onFocusChanged { videoFocused = it.isFocused }
                 .onPreviewKeyEvent { event ->
                     if (state.error != null) return@onPreviewKeyEvent false
                     val handled = event.key == Key.DirectionUp ||
@@ -217,12 +238,13 @@ fun ShortsScreen(
                     if (!handled) return@onPreviewKeyEvent false
                     if (event.nativeKeyEvent.repeatCount > 0) return@onPreviewKeyEvent true
 
+                    onShowOverlay()
+                    autoHideEpoch++
                     when (event.key) {
                         Key.DirectionUp -> {
                             if (state.index > 0) {
                                 onPrevious()
                             } else {
-                                onShowOverlay()
                                 focusChromeRequested = true
                             }
                         }
@@ -239,7 +261,7 @@ fun ShortsScreen(
                         Key.DirectionCenter, Key.Enter, Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause ->
                             onTogglePause()
 
-                        Key.Menu -> onShowOverlay()
+                        Key.Menu -> Unit
                         else -> Unit
                     }
                     true
@@ -295,7 +317,7 @@ fun ShortsScreen(
             }
         }
 
-        if (current != null) {
+        if (current != null && overlayVisible) {
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -320,12 +342,10 @@ fun ShortsScreen(
                     modifier = Modifier.width(infoWidth),
                 )
                 Spacer(Modifier.weight(1f))
-                if (overlayVisible) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        HudHint("↑↓ 切换")
-                        HudHint("OK 暂停")
-                        HudHint("←→ 快进")
-                    }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    HudHint("↑↓ 切换")
+                    HudHint("OK 暂停")
+                    HudHint("←→ 快进")
                 }
             }
         }
