@@ -2,7 +2,6 @@ package com.dongpiandi.douyintv.ui.screens
 
 import android.annotation.SuppressLint
 import android.graphics.Color as AndroidColor
-import android.util.Log
 import android.webkit.CookieManager
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -80,10 +79,10 @@ fun LoginScreen(
     val closeFocusRequester = remember { FocusRequester() }
     val refreshFocusRequester = remember { FocusRequester() }
     var loading by remember { mutableStateOf(true) }
-    var pageReady by remember { mutableStateOf(false) }
     var qrVisible by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var handled by remember { mutableStateOf(false) }
+    var probeGeneration by remember { mutableStateOf(0) }
     val webView = remember {
         WebView(context).apply {
             setBackgroundColor(AndroidColor.BLACK)
@@ -111,27 +110,29 @@ fun LoginScreen(
                     DESKTOP_LOGIN_JS,
                     setOf("*"),
                 )
+                WebViewCompat.addDocumentStartJavaScript(
+                    this,
+                    LOGIN_MODAL_FIT_JS,
+                    setOf("*"),
+                )
             }
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
             webChromeClient = object : WebChromeClient() {
                 override fun onProgressChanged(view: WebView?, newProgress: Int) {
                     if (newProgress >= 65) {
                         loading = false
-                        pageReady = true
                     }
                 }
             }
             webViewClient = object : WebViewClient() {
                 override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                     loading = true
-                    pageReady = false
                     qrVisible = false
                     error = null
                 }
 
                 override fun onPageFinished(view: WebView?, url: String?) {
                     loading = false
-                    pageReady = true
                 }
 
                 override fun onReceivedError(
@@ -141,7 +142,6 @@ fun LoginScreen(
                 ) {
                     if (request?.isForMainFrame == true) {
                         loading = false
-                        pageReady = false
                         error = "登录页加载失败，请检查网络后重试"
                     }
                 }
@@ -188,19 +188,16 @@ fun LoginScreen(
         }
     }
 
-    LaunchedEffect(pageReady, webView) {
-        if (!pageReady) return@LaunchedEffect
+    LaunchedEffect(webView, probeGeneration) {
+        delay(1_500)
         repeat(60) { attempt ->
             if (!isActive || handled || qrVisible) return@LaunchedEffect
             val result = webView.evaluateJavascriptSuspend(LOGIN_PROBE_JS)
             if (result.contains("qr", ignoreCase = true)) {
                 webView.evaluateJavascriptSuspend(FIT_LOGIN_MODAL_JS)
                 qrVisible = true
-                Log.d("DouyinLoginProbe", webView.evaluateJavascriptSuspend(LOGIN_QR_LAYOUT_JS))
+                error = null
                 return@LaunchedEffect
-            }
-            if (attempt == 2) {
-                Log.d("DouyinLoginProbe", webView.evaluateJavascriptSuspend(LOGIN_DOM_DUMP_JS))
             }
             if (attempt >= 59) {
                 error = "二维码未出现，请点击“重新显示二维码”"
@@ -227,7 +224,7 @@ fun LoginScreen(
                     error = null
                     qrVisible = false
                     loading = true
-                    pageReady = false
+                    probeGeneration += 1
                     webView.reload()
                 },
                 onClose = onClose,
@@ -502,117 +499,12 @@ private const val LOGIN_PROBE_JS = """
         const text = (el.innerText || '').replace(/\s+/g, '').trim();
         return visible(el) && text === '我的';
       });
-      if (accountEntry) {
+      if (accountEntry && !globalThis.__douyinTvTriedAccountEntry) {
+        globalThis.__douyinTvTriedAccountEntry = true;
         accountEntry.click();
         return 'clicked';
       }
       return 'waiting';
-    })();
-"""
-
-private const val LOGIN_DOM_DUMP_JS = """
-    (function () {
-      const describe = (el) => {
-        const rect = el.getBoundingClientRect();
-        return {
-          tag: el.tagName,
-          text: (el.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 80),
-          ownText: (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80),
-          cls: String(el.className || '').slice(0, 140),
-          e2e: el.getAttribute('data-e2e') || '',
-          aria: el.getAttribute('aria-label') || '',
-          title: el.getAttribute('title') || '',
-          role: el.getAttribute('role') || '',
-          href: String(el.getAttribute('href') || '').slice(0, 140),
-          rect: [Math.round(rect.x), Math.round(rect.y),
-            Math.round(rect.width), Math.round(rect.height)],
-          html: String(el.outerHTML || '').slice(0, 500),
-        };
-      };
-      const all = Array.from(document.querySelectorAll('*'));
-      const matches = all.filter((el) => {
-        const plain = (el.innerText || '').replace(/\s+/g, '').trim();
-        const rect = el.getBoundingClientRect();
-        return plain === '登录' && rect.width > 0 && rect.height > 0;
-      });
-      const describeChain = (el) => {
-        const out = [];
-        let node = el;
-        for (let i = 0; node && i < 6; i += 1, node = node.parentElement) {
-          out.push(describe(node));
-        }
-        return out;
-      };
-      return JSON.stringify({
-        href: location.href,
-        title: document.title,
-        matches: matches.slice(0, 8).map(describeChain),
-        buttons: Array.from(document.querySelectorAll(
-          'button, a, [role="button"]'
-        )).filter((el) => {
-          const rect = el.getBoundingClientRect();
-          return rect.width > 0 && rect.height > 0;
-        }).slice(0, 40).map(describe),
-      });
-    })();
-"""
-
-private const val LOGIN_QR_LAYOUT_JS = """
-    (function () {
-      const describe = (el) => {
-        if (!el) return null;
-        const rect = el.getBoundingClientRect();
-        const style = getComputedStyle(el);
-        return {
-          tag: el.tagName,
-          cls: String(el.className || '').slice(0, 160),
-          rect: [Math.round(rect.x), Math.round(rect.y),
-            Math.round(rect.width), Math.round(rect.height)],
-          overflow: style.overflow,
-          transform: style.transform,
-          zoom: style.zoom,
-          position: style.position,
-        };
-      };
-      const modal = document.querySelector('.douyin_login_new_class');
-      const qr = document.querySelector('#douyin_login_comp_scan_code_qrcode');
-      const img = qr ? (qr.querySelector('img') || qr.querySelector('canvas')) : null;
-      const viewport = document.querySelector('meta[name="viewport"]');
-      const modalChain = [];
-      let node = modal;
-      for (let i = 0; node && i < 8; i += 1, node = node.parentElement) {
-        const rect = node.getBoundingClientRect();
-        const style = getComputedStyle(node);
-        modalChain.push({
-          tag: node.tagName,
-          cls: String(node.className || '').slice(0, 120),
-          rect: [Math.round(rect.x), Math.round(rect.y),
-            Math.round(rect.width), Math.round(rect.height)],
-          position: style.position,
-          top: style.top,
-          left: style.left,
-          transform: style.transform,
-          overflow: style.overflow,
-          display: style.display,
-        });
-      }
-      return JSON.stringify({
-        window: [innerWidth, innerHeight, devicePixelRatio, scrollX, scrollY],
-        screen: [screen.width, screen.height, screen.availWidth, screen.availHeight],
-        visualViewport: window.visualViewport ? [
-          Math.round(visualViewport.width),
-          Math.round(visualViewport.height),
-          visualViewport.scale,
-          Math.round(visualViewport.offsetTop),
-        ] : null,
-        viewportMeta: viewport ? viewport.content : '',
-        body: describe(document.body),
-        modal: describe(modal),
-        modalChain: modalChain,
-        qr: describe(qr),
-        image: describe(img),
-        imageSrc: img ? String(img.getAttribute('src') || '').slice(0, 180) : '',
-      });
     })();
 """
 
@@ -637,6 +529,40 @@ private const val FIT_LOGIN_MODAL_JS = """
         node = node.parentElement;
       }
       return 'fitted';
+    })();
+"""
+
+private const val LOGIN_MODAL_FIT_JS = """
+    (() => {
+      const fit = () => {
+        const modal = document.querySelector('.douyin_login_new_class');
+        if (!modal) return;
+        const viewportHeight = Math.max(
+          window.innerHeight || 0,
+          document.documentElement ? document.documentElement.clientHeight : 0,
+          600
+        );
+        if (document.documentElement) {
+          document.documentElement.style.minHeight = viewportHeight + 'px';
+        }
+        if (document.body) {
+          document.body.style.minHeight = viewportHeight + 'px';
+        }
+        let node = modal.parentElement;
+        while (node && node !== document.body) {
+          const rect = node.getBoundingClientRect();
+          if (rect.height < 2) {
+            node.style.setProperty('height', viewportHeight + 'px', 'important');
+            node.style.setProperty('min-height', viewportHeight + 'px', 'important');
+          }
+          node = node.parentElement;
+        }
+      };
+      globalThis.__douyinTvFitLoginModal = fit;
+      if (globalThis.__douyinTvFitLoginTimer) {
+        clearInterval(globalThis.__douyinTvFitLoginTimer);
+      }
+      globalThis.__douyinTvFitLoginTimer = setInterval(fit, 500);
     })();
 """
 
