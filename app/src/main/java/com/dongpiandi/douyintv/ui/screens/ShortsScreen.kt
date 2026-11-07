@@ -4,7 +4,6 @@ package com.dongpiandi.douyintv.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -30,6 +29,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -45,6 +45,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -62,8 +63,10 @@ import coil.compose.AsyncImage
 import com.dongpiandi.douyintv.model.ShortVideo
 import com.dongpiandi.douyintv.network.DouyinMediaSourceFactory
 import com.dongpiandi.douyintv.ui.MainTab
+import com.dongpiandi.douyintv.ui.EngagementUiState
 import com.dongpiandi.douyintv.ui.ShortsUiState
-import com.dongpiandi.douyintv.ui.components.HudHint
+import com.dongpiandi.douyintv.ui.components.CommentsPanel
+import com.dongpiandi.douyintv.ui.components.DanmakuOverlay
 import com.dongpiandi.douyintv.ui.components.TopChrome
 import com.dongpiandi.douyintv.ui.formatCount
 import com.dongpiandi.douyintv.ui.theme.FocusRing
@@ -77,6 +80,7 @@ private const val OVERLAY_AUTO_HIDE_DELAY_MS = 4_000L
 @Composable
 fun ShortsScreen(
     state: ShortsUiState,
+    engagement: EngagementUiState,
     overlayVisible: Boolean,
     isLoggedIn: Boolean,
     onSelectTab: (MainTab) -> Unit,
@@ -89,14 +93,19 @@ fun ShortsScreen(
     onEnded: () -> Unit,
     onPlaybackError: (String) -> Unit,
     onRefresh: () -> Unit,
+    onPrepareEngagement: (ShortVideo) -> Unit,
+    onOpenComments: (ShortVideo) -> Unit,
+    onCloseComments: () -> Unit,
+    onLoadMoreComments: (ShortVideo) -> Unit,
+    onRetryComments: (ShortVideo) -> Unit,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val focusManager = LocalFocusManager.current
     val videoFocusRequester = remember { FocusRequester() }
     val chromeFocusRequester = remember { FocusRequester() }
     val retryFocusRequester = remember { FocusRequester() }
     var focusChromeRequested by remember { mutableStateOf(false) }
-    var videoFocused by remember { mutableStateOf(false) }
     var autoHideEpoch by remember { mutableIntStateOf(0) }
     val player = remember {
         ExoPlayer.Builder(context)
@@ -120,6 +129,7 @@ fun ShortsScreen(
     val latestOnEnded by rememberUpdatedState(onEnded)
     val latestOnError by rememberUpdatedState(onPlaybackError)
     val activeUrl = current?.playUrls?.getOrNull(urlIndex)
+    val commentsVisible = engagement.visible
 
     DisposableEffect(player) {
         val listener = object : Player.Listener {
@@ -178,6 +188,17 @@ fun ShortsScreen(
 
     LaunchedEffect(current?.id) {
         if (current != null) {
+            onPrepareEngagement(current)
+            if (!engagement.visible) {
+                videoFocusRequester.requestFocus()
+            }
+        }
+    }
+
+    LaunchedEffect(commentsVisible) {
+        if (!commentsVisible) {
+            withFrameNanos { }
+            focusManager.clearFocus(force = true)
             videoFocusRequester.requestFocus()
         }
     }
@@ -185,19 +206,27 @@ fun ShortsScreen(
     LaunchedEffect(
         overlayVisible,
         current?.id,
-        videoFocused,
         state.paused,
         autoHideEpoch,
+        commentsVisible,
     ) {
-        if (!overlayVisible || current == null || !videoFocused || state.paused) {
+        if (
+            !overlayVisible ||
+            current == null ||
+            state.paused ||
+            commentsVisible
+        ) {
             return@LaunchedEffect
         }
         delay(OVERLAY_AUTO_HIDE_DELAY_MS)
+        focusManager.clearFocus(force = true)
         onHideOverlay()
+        withFrameNanos { }
+        videoFocusRequester.requestFocus()
     }
 
-    LaunchedEffect(overlayVisible, focusChromeRequested) {
-        if (overlayVisible && focusChromeRequested) {
+    LaunchedEffect(overlayVisible, focusChromeRequested, commentsVisible) {
+        if (overlayVisible && focusChromeRequested && !commentsVisible) {
             chromeFocusRequester.requestFocus()
             focusChromeRequested = false
         }
@@ -221,7 +250,6 @@ fun ShortsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .focusRequester(videoFocusRequester)
-                .onFocusChanged { videoFocused = it.isFocused }
                 .onPreviewKeyEvent { event ->
                     if (state.error != null) return@onPreviewKeyEvent false
                     val handled = event.key == Key.DirectionUp ||
@@ -261,12 +289,12 @@ fun ShortsScreen(
                         Key.DirectionCenter, Key.Enter, Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause ->
                             onTogglePause()
 
-                        Key.Menu -> Unit
+                        Key.Menu -> focusChromeRequested = true
                         else -> Unit
                     }
                     true
                 }
-                .focusable(),
+                .focusable(enabled = !commentsVisible),
         )
         current?.coverUrl?.let { cover ->
             AsyncImage(
@@ -304,7 +332,17 @@ fun ShortsScreen(
             )
         }
 
-        if (overlayVisible) {
+        if (current != null && !commentsVisible) {
+            DanmakuOverlay(
+                messages = engagement.danmaku,
+                player = player,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 82.dp),
+            )
+        }
+
+        if (overlayVisible && !commentsVisible) {
             Column(Modifier.fillMaxSize()) {
                 TopChrome(
                     selectedTab = MainTab.SHORTS,
@@ -312,12 +350,19 @@ fun ShortsScreen(
                     onSelectTab = onSelectTab,
                     onAccountClick = onAccountClick,
                     initialFocusRequester = chromeFocusRequester,
+                    commentLabel = current?.let {
+                        "评论 ${formatCount(it.commentCount)}"
+                    },
+                    onCommentsClick = {
+                        current?.let(onOpenComments)
+                    },
+                    onUserInteraction = { autoHideEpoch++ },
                 )
                 Spacer(Modifier.weight(1f))
             }
         }
 
-        if (current != null && overlayVisible) {
+        if (current != null && overlayVisible && !commentsVisible) {
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -341,12 +386,6 @@ fun ShortsScreen(
                     paused = state.paused,
                     modifier = Modifier.width(infoWidth),
                 )
-                Spacer(Modifier.weight(1f))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    HudHint("↑↓ 切换")
-                    HudHint("OK 暂停")
-                    HudHint("←→ 快进")
-                }
             }
         }
 
@@ -366,8 +405,6 @@ fun ShortsScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 CircularProgressIndicator(color = FocusRing)
-                Spacer(Modifier.height(18.dp))
-                Text("正在加载推荐视频", color = TextSecondary)
             }
         }
 
@@ -378,6 +415,21 @@ fun ShortsScreen(
                 actionLabel = if (current == null) "重试" else "刷新视频",
                 onAction = onRefresh,
                 modifier = Modifier.align(Alignment.Center),
+            )
+        }
+
+        if (current != null && commentsVisible) {
+            CommentsPanel(
+                videoId = current.id,
+                comments = engagement.comments,
+                total = engagement.total.coerceAtLeast(current.commentCount),
+                loading = engagement.loading,
+                loadingMore = engagement.loadingMore,
+                error = engagement.error,
+                hasMore = engagement.hasMore,
+                onClose = onCloseComments,
+                onRetry = { onRetryComments(current) },
+                onLoadMore = { onLoadMoreComments(current) },
             )
         }
     }

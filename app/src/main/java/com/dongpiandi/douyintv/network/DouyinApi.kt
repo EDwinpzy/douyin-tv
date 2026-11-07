@@ -2,8 +2,11 @@ package com.dongpiandi.douyintv.network
 
 import com.dongpiandi.douyintv.data.DeviceIdentityStore
 import com.dongpiandi.douyintv.data.SessionStore
+import com.dongpiandi.douyintv.model.CommentPage
+import com.dongpiandi.douyintv.model.DanmakuMessage
 import com.dongpiandi.douyintv.model.LivePlayback
 import com.dongpiandi.douyintv.model.LiveRoom
+import com.dongpiandi.douyintv.model.ShortComment
 import com.dongpiandi.douyintv.model.ShortVideo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -55,6 +58,64 @@ class DouyinApi(
             throw ApiException(response.status_msg ?: "短视频接口返回 ${response.status_code}")
         }
         response.aweme_list.mapNotNull(::mapVideo)
+    }
+
+    suspend fun loadComments(
+        awemeId: String,
+        cursor: Long = 0,
+        count: Int = 50,
+    ): CommentPage = withContext(Dispatchers.IO) {
+        val params = SignedParams()
+            .add("aweme_id", awemeId)
+            .add("cursor", cursor)
+            .add("count", count.coerceIn(1, 50))
+        val request = Request.Builder()
+            .url("$IES_HOST/web/api/v2/comment/list/?${params.encoded()}")
+            .header("User-Agent", USER_AGENT)
+            .header("Accept", "application/json, text/plain, */*")
+            .header("Referer", "$WEB_HOST/video/$awemeId")
+            .get()
+            .build()
+        val response = json.decodeFromString<MobileCommentListResponse>(executeText(request))
+        val statusCode = response.status_code?.statusCode ?: 0
+        if (statusCode != 0) {
+            val message = response.status_code?.statusMsg.orEmpty()
+            throw ApiException(message.ifBlank { "评论接口返回 $statusCode" })
+        }
+        val comments = response.comments.orEmpty()
+            .mapNotNull(::mapComment)
+            .distinctBy(ShortComment::id)
+        CommentPage(
+            comments = comments,
+            cursor = 0,
+            hasMore = false,
+            total = comments.size.toLong(),
+        )
+    }
+
+    suspend fun loadDanmaku(
+        itemId: String,
+        durationMs: Long,
+    ): List<DanmakuMessage> = withContext(Dispatchers.IO) {
+        if (itemId.isBlank() || durationMs <= 0) return@withContext emptyList()
+        ensureTtwid()
+        val params = commonWebParams()
+            .add("item_id", itemId)
+            .add("duration", durationMs)
+            .add("start_time", 0)
+            .add("end_time", (durationMs - 1).coerceAtLeast(0))
+            .add("danmaku_switch_status", 1)
+        val request = requestBuilder(
+            url = "$WEB_HOST/aweme/v1/web/danmaku/get_v2/?${params.sign(signer)}",
+            referer = "$WEB_HOST/video/$itemId",
+        ).get().build()
+        val response = json.decodeFromString<DanmakuListResponse>(executeText(request))
+        if (response.status_code != 0) {
+            throw ApiException(response.status_msg ?: "弹幕接口返回 ${response.status_code}")
+        }
+        response.danmaku_list.orEmpty()
+            .mapNotNull(::mapDanmaku)
+            .sortedBy(DanmakuMessage::offsetMs)
     }
 
     suspend fun loadLiveRooms(): List<LiveRoom> = withContext(Dispatchers.IO) {
@@ -289,6 +350,30 @@ class DouyinApi(
         )
     }
 
+    private fun mapComment(dto: CommentDto): ShortComment? {
+        val text = dto.text.trim()
+        if (dto.cid.isBlank() || text.isBlank()) return null
+        return ShortComment(
+            id = dto.cid,
+            text = text,
+            nickname = dto.user?.nickname.orEmpty().trim().ifBlank { "抖音用户" },
+            avatarUrl = dto.user?.avatar_thumb?.url_list?.firstOrNull()?.let(::forceHttps),
+            likeCount = dto.digg_count,
+            replyCount = dto.reply_comment_total,
+            ipLabel = dto.ip_label.trim(),
+        )
+    }
+
+    private fun mapDanmaku(dto: DanmakuDto): DanmakuMessage? {
+        val text = dto.text.trim()
+        if (text.isBlank()) return null
+        return DanmakuMessage(
+            id = dto.danmaku_id.ifBlank { "${dto.offset_time}-$text" },
+            text = text,
+            offsetMs = dto.offset_time.coerceAtLeast(0),
+        )
+    }
+
     private fun mapLiveRoom(dto: LiveRoomDto): LiveRoom? {
         val webRid = dto.owner?.web_rid.orEmpty()
         if (dto.id_str.isBlank() || webRid.isBlank()) return null
@@ -328,6 +413,7 @@ class DouyinApi(
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
                 "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         private const val WEB_HOST = "https://www.douyin.com"
+        private const val IES_HOST = "https://www.iesdouyin.com"
         private const val LIVE_HOST = "https://live.douyin.com"
     }
 }

@@ -12,6 +12,29 @@ data class ShortVideo(
     val commentCount: Long,
 )
 
+data class ShortComment(
+    val id: String,
+    val text: String,
+    val nickname: String,
+    val avatarUrl: String?,
+    val likeCount: Long,
+    val replyCount: Long,
+    val ipLabel: String,
+)
+
+data class DanmakuMessage(
+    val id: String,
+    val text: String,
+    val offsetMs: Long,
+)
+
+data class CommentPage(
+    val comments: List<ShortComment>,
+    val cursor: Long,
+    val hasMore: Boolean,
+    val total: Long,
+)
+
 data class LiveRoom(
     val id: String,
     val webRid: String,

@@ -64,6 +64,8 @@ fun DouyinTvApp(viewModel: MainViewModel) {
             state.loginVisible -> viewModel.closeLogin()
             state.accountMenuVisible -> viewModel.closeAccountMenu()
             state.livePlayer != null -> viewModel.closeLivePlayer()
+            state.tab == MainTab.SHORTS && state.engagement.visible ->
+                viewModel.closeComments()
             state.tab == MainTab.SHORTS && state.overlayVisible -> viewModel.hideOverlay()
             else -> activity?.finish()
         }
@@ -93,6 +95,7 @@ fun DouyinTvApp(viewModel: MainViewModel) {
             state.tab == MainTab.SHORTS -> {
                 ShortsScreen(
                     state = state.shorts,
+                    engagement = state.engagement,
                     overlayVisible = state.overlayVisible,
                     isLoggedIn = state.isLoggedIn,
                     onSelectTab = viewModel::selectTab,
@@ -107,6 +110,11 @@ fun DouyinTvApp(viewModel: MainViewModel) {
                     onEnded = viewModel::onShortEnded,
                     onPlaybackError = viewModel::onShortPlaybackError,
                     onRefresh = viewModel::refreshShorts,
+                    onPrepareEngagement = viewModel::prepareEngagement,
+                    onOpenComments = viewModel::openComments,
+                    onCloseComments = viewModel::closeComments,
+                    onLoadMoreComments = viewModel::loadMoreComments,
+                    onRetryComments = viewModel::retryComments,
                 )
             }
 

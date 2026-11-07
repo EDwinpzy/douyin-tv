@@ -145,11 +145,6 @@ fun LiveGridScreen(
                     color = TextPrimary,
                     style = MaterialTheme.typography.headlineLarge,
                 )
-                Text(
-                    text = "正在发生的现场，按 OK 进入直播间",
-                    color = TextSecondary,
-                    style = MaterialTheme.typography.bodyLarge,
-                )
             }
             Spacer(Modifier.weight(1f))
             if (state.rooms.isNotEmpty()) {
@@ -198,8 +193,6 @@ fun LiveGridScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     CircularProgressIndicator(color = FocusRing)
-                    Spacer(Modifier.height(16.dp))
-                    Text("正在连接直播广场", color = TextSecondary)
                 }
             }
 
@@ -496,14 +489,13 @@ fun LivePlayerScreen(
             }
         }
 
-        Row(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(30.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            HudHint(if (paused) "已暂停 · OK 继续" else "OK 暂停")
-            HudHint("返回键离开")
+        if (paused) {
+            HudHint(
+                text = "已暂停",
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(30.dp),
+            )
         }
 
         if (buffering && state.error == null) {

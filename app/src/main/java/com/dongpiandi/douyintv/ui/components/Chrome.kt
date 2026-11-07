@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -27,6 +28,9 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.dongpiandi.douyintv.ui.MainTab
@@ -43,6 +47,9 @@ fun TopChrome(
     onSelectTab: (MainTab) -> Unit,
     onAccountClick: () -> Unit,
     initialFocusRequester: FocusRequester? = null,
+    commentLabel: String? = null,
+    onCommentsClick: (() -> Unit)? = null,
+    onUserInteraction: (() -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier
@@ -63,19 +70,31 @@ fun TopChrome(
                 label = "推荐",
                 selected = selectedTab == MainTab.SHORTS,
                 focusRequester = initialFocusRequester,
+                onUserInteraction = onUserInteraction,
                 onClick = { onSelectTab(MainTab.SHORTS) },
             )
             TvPill(
                 label = "直播",
                 selected = selectedTab == MainTab.LIVE,
+                onUserInteraction = onUserInteraction,
                 onClick = { onSelectTab(MainTab.LIVE) },
             )
         }
         Spacer(Modifier.weight(1f))
+        if (commentLabel != null && onCommentsClick != null) {
+            TvPill(
+                label = commentLabel,
+                selected = false,
+                onUserInteraction = onUserInteraction,
+                onClick = onCommentsClick,
+            )
+            Spacer(Modifier.width(10.dp))
+        }
         TvPill(
             label = if (isLoggedIn) "账号 · 已登录" else "扫码登录",
             selected = false,
             accent = true,
+            onUserInteraction = onUserInteraction,
             onClick = onAccountClick,
         )
     }
@@ -87,6 +106,7 @@ private fun TvPill(
     selected: Boolean,
     accent: Boolean = false,
     focusRequester: FocusRequester? = null,
+    onUserInteraction: (() -> Unit)? = null,
     onClick: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -112,7 +132,14 @@ private fun TvPill(
             .then(
                 if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier,
             )
-            .onFocusChanged { focused = it.isFocused }
+            .onFocusChanged {
+                if (it.isFocused && !focused) onUserInteraction?.invoke()
+                focused = it.isFocused
+            }
+            .onPreviewKeyEvent { event ->
+                if (event.type == KeyEventType.KeyDown) onUserInteraction?.invoke()
+                false
+            }
             .focusable()
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(50),
@@ -132,8 +159,12 @@ private fun TvPill(
 }
 
 @Composable
-fun HudHint(text: String) {
+fun HudHint(
+    text: String,
+    modifier: Modifier = Modifier,
+) {
     Surface(
+        modifier = modifier,
         color = Color.Black.copy(alpha = 0.48f),
         shape = RoundedCornerShape(50),
     ) {

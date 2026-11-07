@@ -5,9 +5,14 @@ import android.webkit.CookieManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.dongpiandi.douyintv.DouyinTvApplication
+import com.dongpiandi.douyintv.model.DanmakuMessage
 import com.dongpiandi.douyintv.model.LivePlayback
 import com.dongpiandi.douyintv.model.LiveRoom
+import com.dongpiandi.douyintv.model.ShortComment
 import com.dongpiandi.douyintv.model.ShortVideo
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -49,6 +54,20 @@ data class LivePlayerUiState(
     val error: String? = null,
 )
 
+data class EngagementUiState(
+    val videoId: String = "",
+    val danmaku: List<DanmakuMessage> = emptyList(),
+    val comments: List<ShortComment> = emptyList(),
+    val visible: Boolean = false,
+    val loading: Boolean = false,
+    val loadingMore: Boolean = false,
+    val error: String? = null,
+    val cursor: Long = 0,
+    val hasMore: Boolean = false,
+    val total: Long = 0,
+    val resumeOnClose: Boolean = false,
+)
+
 data class AppUiState(
     val tab: MainTab = MainTab.SHORTS,
     val overlayVisible: Boolean = true,
@@ -56,6 +75,7 @@ data class AppUiState(
     val loginVisible: Boolean = false,
     val isLoggedIn: Boolean = false,
     val shorts: ShortsUiState = ShortsUiState(),
+    val engagement: EngagementUiState = EngagementUiState(),
     val live: LiveListUiState = LiveListUiState(),
     val livePlayer: LivePlayerUiState? = null,
 )
@@ -65,6 +85,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val sessionStore = container.sessionStore
     private val api = container.api
     private val shortsLoadMutex = Mutex()
+    private var engagementJob: Job? = null
 
     private val _state = MutableStateFlow(
         AppUiState(isLoggedIn = sessionStore.hasSession()),
@@ -81,6 +102,152 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun hideOverlay() {
         _state.update { it.copy(overlayVisible = false, accountMenuVisible = false) }
+    }
+
+    fun prepareEngagement(video: ShortVideo, force: Boolean = false) {
+        val previous = _state.value.engagement
+        if (
+            !force &&
+            previous.videoId == video.id &&
+            (previous.loading || previous.comments.isNotEmpty() || previous.danmaku.isNotEmpty())
+        ) {
+            return
+        }
+        engagementJob?.cancel()
+        val sameVideo = previous.videoId == video.id
+        _state.update {
+            it.copy(
+                engagement = EngagementUiState(
+                    videoId = video.id,
+                    visible = sameVideo && previous.visible,
+                    loading = true,
+                    resumeOnClose = if (sameVideo) previous.resumeOnClose else false,
+                ),
+            )
+        }
+        engagementJob = viewModelScope.launch {
+            val results = coroutineScope {
+                val comments = async { runCatching { api.loadComments(video.id) } }
+                val danmaku = async {
+                    runCatching { api.loadDanmaku(video.id, video.durationMs) }
+                }
+                comments.await() to danmaku.await()
+            }
+            if (_state.value.engagement.videoId != video.id) return@launch
+            val commentsPage = results.first.getOrNull()
+            val comments = commentsPage?.comments.orEmpty()
+            val officialDanmaku = results.second.getOrDefault(emptyList())
+            val visibleDanmaku = officialDanmaku.ifEmpty { commentDanmaku(comments) }
+            _state.update { current ->
+                if (current.engagement.videoId != video.id) {
+                    current
+                } else {
+                    current.copy(
+                        engagement = current.engagement.copy(
+                            danmaku = visibleDanmaku,
+                            comments = comments,
+                            loading = false,
+                            loadingMore = false,
+                            error = results.first.exceptionOrNull()
+                                ?.toDisplayMessage("评论加载失败"),
+                            cursor = commentsPage?.cursor ?: 0,
+                            hasMore = commentsPage?.hasMore ?: false,
+                            total = commentsPage?.total ?: 0,
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    fun openComments(video: ShortVideo) {
+        val current = _state.value
+        val resumeOnClose = if (current.engagement.visible) {
+            current.engagement.resumeOnClose
+        } else {
+            !current.shorts.paused
+        }
+        _state.update {
+            it.copy(
+                shorts = it.shorts.copy(paused = true),
+                engagement = it.engagement.copy(
+                    visible = true,
+                    resumeOnClose = resumeOnClose,
+                ),
+            )
+        }
+        if (current.engagement.videoId != video.id && !current.engagement.loading) {
+            prepareEngagement(video)
+        }
+    }
+
+    fun closeComments() {
+        _state.update { current ->
+            val shouldResume = current.engagement.resumeOnClose
+            current.copy(
+                overlayVisible = false,
+                shorts = current.shorts.copy(
+                    paused = if (shouldResume) false else current.shorts.paused,
+                ),
+                engagement = current.engagement.copy(
+                    visible = false,
+                    resumeOnClose = false,
+                ),
+            )
+        }
+    }
+
+    fun loadMoreComments(video: ShortVideo) {
+        val engagement = _state.value.engagement
+        if (
+            engagement.videoId != video.id ||
+            engagement.loading ||
+            engagement.loadingMore ||
+            !engagement.hasMore
+        ) {
+            return
+        }
+        val cursor = engagement.cursor
+        _state.update {
+            it.copy(
+                engagement = it.engagement.copy(loadingMore = true, error = null),
+            )
+        }
+        viewModelScope.launch {
+            val result = runCatching { api.loadComments(video.id, cursor) }
+            _state.update { current ->
+                if (current.engagement.videoId != video.id) {
+                    current
+                } else {
+                    val page = result.getOrNull()
+                    if (page == null) {
+                        current.copy(
+                            engagement = current.engagement.copy(
+                                loadingMore = false,
+                                error = result.exceptionOrNull()
+                                    ?.toDisplayMessage("评论加载失败"),
+                            ),
+                        )
+                    } else {
+                        current.copy(
+                            engagement = current.engagement.copy(
+                                comments = (current.engagement.comments + page.comments)
+                                    .distinctBy(ShortComment::id),
+                                cursor = page.cursor,
+                                hasMore = page.hasMore,
+                                total = page.total,
+                                loadingMore = false,
+                                error = null,
+                            ),
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    fun retryComments(video: ShortVideo) {
+        prepareEngagement(video, force = true)
     }
 
     fun selectTab(tab: MainTab) {
@@ -390,4 +557,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun Throwable.toDisplayMessage(fallback: String): String =
         message?.takeIf { it.isNotBlank() } ?: fallback
+
+    private fun commentDanmaku(comments: List<ShortComment>): List<DanmakuMessage> =
+        comments.asSequence()
+            .map { comment -> comment.text.replace('\n', ' ').trim() }
+            .filter(String::isNotBlank)
+            .distinct()
+            .take(12)
+            .mapIndexed { index, text ->
+                DanmakuMessage(
+                    id = "comment-danmaku-$index",
+                    text = text,
+                    offsetMs = 600L + index * 1_200L,
+                )
+            }
+            .toList()
 }

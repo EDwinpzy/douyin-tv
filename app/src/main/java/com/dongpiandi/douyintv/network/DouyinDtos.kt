@@ -1,6 +1,7 @@
 package com.dongpiandi.douyintv.network
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerialName
 
 @Serializable
 data class ChannelFeedResponse(
@@ -46,6 +47,53 @@ data class AwemeStatsDto(
     val digg_count: Long = 0,
     val comment_count: Long = 0,
     val share_count: Long = 0,
+)
+
+@Serializable
+data class MobileCommentListResponse(
+    val comments: List<CommentDto>? = null,
+    val status_code: MobileStatusDto? = null,
+)
+
+@Serializable
+data class MobileStatusDto(
+    @SerialName("StatusCode")
+    val statusCode: Int = 0,
+    @SerialName("StatusMsg")
+    val statusMsg: String = "",
+)
+
+@Serializable
+data class CommentDto(
+    val cid: String = "",
+    val text: String = "",
+    val create_time: Long = 0,
+    val digg_count: Long = 0,
+    val reply_comment_total: Long = 0,
+    val ip_label: String = "",
+    val user: CommentUserDto? = null,
+)
+
+@Serializable
+data class CommentUserDto(
+    val nickname: String = "",
+    val avatar_thumb: UrlListDto? = null,
+)
+
+@Serializable
+data class DanmakuListResponse(
+    val status_code: Int = 0,
+    val status_msg: String? = null,
+    val total: Long = 0,
+    val danmaku_list: List<DanmakuDto>? = null,
+)
+
+@Serializable
+data class DanmakuDto(
+    val danmaku_id: String = "",
+    val text: String = "",
+    val offset_time: Long = 0,
+    val digg_count: Long = 0,
 )
 
 @Serializable
