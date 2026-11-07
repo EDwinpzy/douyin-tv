@@ -1,6 +1,5 @@
 package com.dongpiandi.douyintv.ui.components
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -76,8 +75,6 @@ fun CommentsPanel(
     onLoadMore: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    BackHandler(onBack = onClose)
-
     val closeFocusRequester = remember { FocusRequester() }
     val retryFocusRequester = remember { FocusRequester() }
     val requesters = remember(videoId) { mutableMapOf<String, FocusRequester>() }
