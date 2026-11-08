@@ -105,9 +105,11 @@ fun ShortsScreen(
     engagement: EngagementUiState,
     overlayVisible: Boolean,
     sidePanelVisible: Boolean,
+    searchVisible: Boolean,
     isLoggedIn: Boolean,
     onSelectTab: (MainTab) -> Unit,
     onAccountClick: () -> Unit,
+    onSearchClick: () -> Unit,
     onHistoryClick: () -> Unit,
     onShowOverlay: () -> Unit,
     onHideOverlay: () -> Unit,
@@ -247,6 +249,7 @@ fun ShortsScreen(
         overlayVisible,
         commentsVisible,
         sidePanelVisible,
+        searchVisible,
         lifecycleState,
     ) {
         if (
@@ -254,6 +257,7 @@ fun ShortsScreen(
             !overlayVisible &&
             !commentsVisible &&
             !sidePanelVisible &&
+            !searchVisible &&
             lifecycleState.isAtLeast(Lifecycle.State.RESUMED)
         ) {
             withFrameNanos { }
@@ -268,13 +272,15 @@ fun ShortsScreen(
         state.paused,
         commentsVisible,
         sidePanelVisible,
+        searchVisible,
     ) {
         if (
             !overlayVisible ||
             current == null ||
             state.paused ||
             commentsVisible ||
-            sidePanelVisible
+            sidePanelVisible ||
+            searchVisible
         ) {
             return@LaunchedEffect
         }
@@ -298,12 +304,14 @@ fun ShortsScreen(
         focusChromeRequested,
         commentsVisible,
         sidePanelVisible,
+        searchVisible,
     ) {
         if (
             overlayVisible &&
             focusChromeRequested &&
             !commentsVisible &&
-            !sidePanelVisible
+            !sidePanelVisible &&
+            !searchVisible
         ) {
             withFrameNanos { }
             delay(16)
@@ -331,6 +339,7 @@ fun ShortsScreen(
                     !videoFocused ||
                     overlayVisible ||
                     commentsVisible ||
+                    searchVisible ||
                     current == null ||
                     state.error != null
                 ) {
@@ -443,7 +452,9 @@ fun ShortsScreen(
                     }
                     true
                 }
-                .focusable(enabled = !commentsVisible && !sidePanelVisible),
+                .focusable(
+                    enabled = !commentsVisible && !sidePanelVisible && !searchVisible,
+                ),
         )
         Box(
             modifier = videoRegionModifier,
@@ -489,7 +500,7 @@ fun ShortsScreen(
             )
         }
 
-        if (overlayVisible && !commentsVisible && !sidePanelVisible) {
+        if (overlayVisible && !commentsVisible && !sidePanelVisible && !searchVisible) {
             Column(Modifier.fillMaxSize()) {
                 TopChrome(
                     selectedTab = MainTab.SHORTS,
@@ -499,6 +510,7 @@ fun ShortsScreen(
                     initialFocusRequester = chromeFocusRequester,
                     onUserInteraction = { overlayInteractionSignals.trySend(Unit) },
                     showHeaderActions = !sidePanelVisible,
+                    onSearchClick = onSearchClick,
                     downFocusRequester = bottomActionsFocusRequester,
                 )
                 Spacer(Modifier.weight(1f))
@@ -509,7 +521,8 @@ fun ShortsScreen(
             current != null &&
             overlayVisible &&
             !commentsVisible &&
-            !sidePanelVisible
+            !sidePanelVisible &&
+            !searchVisible
         ) {
             Row(
                 modifier = Modifier

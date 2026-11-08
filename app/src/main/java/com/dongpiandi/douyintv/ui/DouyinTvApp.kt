@@ -51,6 +51,7 @@ import com.dongpiandi.douyintv.ui.screens.LoginScreen
 import com.dongpiandi.douyintv.ui.screens.ShortsScreen
 import com.dongpiandi.douyintv.ui.components.AuthorProfileSidebar
 import com.dongpiandi.douyintv.ui.components.MyHomeSidebar
+import com.dongpiandi.douyintv.ui.components.SearchOverlay
 import com.dongpiandi.douyintv.performance.DevicePerformanceProfile
 import com.dongpiandi.douyintv.performance.LocalDevicePerformanceProfile
 import com.dongpiandi.douyintv.ui.theme.Accent
@@ -76,6 +77,7 @@ fun DouyinTvApp(viewModel: MainViewModel) {
     ) {
         BackHandler {
             when {
+                state.search.visible -> viewModel.closeSearch()
                 state.loginVisible -> viewModel.closeLogin()
                 state.accountMenuVisible -> viewModel.closeAccountMenu()
                 state.livePlayer != null -> viewModel.closeLivePlayer()
@@ -129,6 +131,7 @@ fun DouyinTvApp(viewModel: MainViewModel) {
                     overlayVisible = state.overlayVisible,
                     sidePanelVisible =
                         state.accountMenuVisible || state.authorVideos.visible,
+                    searchVisible = state.search.visible,
                     isLoggedIn = state.isLoggedIn,
                     onSelectTab = viewModel::selectTab,
                     onAccountClick = {
@@ -141,6 +144,7 @@ fun DouyinTvApp(viewModel: MainViewModel) {
                             viewModel.openLogin()
                         }
                     },
+                    onSearchClick = viewModel::openSearch,
                     onShowOverlay = viewModel::showOverlay,
                     onHideOverlay = viewModel::hideOverlay,
                     onPrevious = viewModel::previousShort,
@@ -170,6 +174,7 @@ fun DouyinTvApp(viewModel: MainViewModel) {
                     onAccountClick = {
                         if (state.isLoggedIn) viewModel.showAccountMenu() else viewModel.openLogin()
                     },
+                    onSearchClick = viewModel::openSearch,
                     onHistoryClick = {
                         if (state.isLoggedIn) {
                             viewModel.showAccountMenu(MyHomeTab.HISTORY)
@@ -181,7 +186,7 @@ fun DouyinTvApp(viewModel: MainViewModel) {
                     onFocusRoom = viewModel::rememberLiveFocus,
                     onFocusRestored = viewModel::consumeLiveFocusRestore,
                     onRefresh = { viewModel.loadLiveRooms(reset = false) },
-                    focusEnabled = !state.accountMenuVisible,
+                    focusEnabled = !state.accountMenuVisible && !state.search.visible,
                 )
             }
         }
@@ -223,12 +228,43 @@ fun DouyinTvApp(viewModel: MainViewModel) {
                 loadingMore = state.authorVideos.loadingMore,
                 error = state.authorVideos.error,
                 hasMore = state.authorVideos.hasMore,
+                likes = state.authorVideos.likes,
+                likesProgress = state.authorVideos.likesProgress,
+                likesLoading = state.authorVideos.likesLoading,
+                likesLoadingMore = state.authorVideos.likesLoadingMore,
+                likesError = state.authorVideos.likesError,
+                likesHasMore = state.authorVideos.likesHasMore,
+                collections = state.authorVideos.collections,
+                collectionsLoading = state.authorVideos.collectionsLoading,
+                collectionsLoadingMore = state.authorVideos.collectionsLoadingMore,
+                collectionsError = state.authorVideos.collectionsError,
+                collectionsHasMore = state.authorVideos.collectionsHasMore,
+                openingCollectionId = state.authorVideos.openingCollectionId,
                 onClose = viewModel::closeAuthorVideos,
+                onTabSelected = viewModel::selectAuthorTab,
                 onRetryProfile = viewModel::retryAuthorProfile,
                 onRetryVideos = viewModel::retryAuthorVideos,
                 onLoadMore = viewModel::loadMoreAuthorVideos,
                 onPlay = viewModel::playAuthorVideo,
+                onRetryLikes = viewModel::retryAuthorLikes,
+                onLoadMoreLikes = viewModel::loadMoreAuthorLikes,
+                onPlayLike = viewModel::playAuthorLike,
+                onRetryCollections = viewModel::retryAuthorCollections,
+                onLoadMoreCollections = viewModel::loadMoreAuthorCollections,
+                onPlayCollection = viewModel::playAuthorCollection,
             )
+            }
+
+            if (state.search.visible) {
+                SearchOverlay(
+                    state = state.search,
+                    onQueryChange = viewModel::updateSearchQuery,
+                    onSubmit = viewModel::submitSearch,
+                    onClose = viewModel::closeSearch,
+                    onRetry = viewModel::retrySearch,
+                    onLoadMore = viewModel::loadMoreSearch,
+                    onPlay = viewModel::playSearchResult,
+                )
             }
         }
     }

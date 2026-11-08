@@ -2,13 +2,16 @@ package com.dongpiandi.douyintv.network
 
 import com.dongpiandi.douyintv.data.DeviceIdentityStore
 import com.dongpiandi.douyintv.data.SessionStore
+import com.dongpiandi.douyintv.model.CollectionPage
 import com.dongpiandi.douyintv.model.CommentPage
 import com.dongpiandi.douyintv.model.DanmakuMessage
 import com.dongpiandi.douyintv.model.LivePlayback
 import com.dongpiandi.douyintv.model.LiveRoom
+import com.dongpiandi.douyintv.model.SearchPage
 import com.dongpiandi.douyintv.model.ShortComment
 import com.dongpiandi.douyintv.model.ShortVideo
 import com.dongpiandi.douyintv.model.UserProfile
+import com.dongpiandi.douyintv.model.VideoCollection
 import com.dongpiandi.douyintv.model.VideoPage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -209,6 +212,153 @@ class DouyinApi(
             videos = response.aweme_list.orEmpty().mapNotNull(::mapVideo),
             cursor = response.max_cursor.takeIf { it > 0L } ?: response.cursor,
             hasMore = response.has_more != 0,
+        )
+    }
+
+    suspend fun loadAuthorLikedVideos(
+        authorSecUid: String,
+        cursor: Long = 0,
+        count: Int = 20,
+    ): VideoPage = withContext(Dispatchers.IO) {
+        if (authorSecUid.isBlank()) throw ApiException("作者信息不完整")
+        ensureTtwid()
+        val params = commonWebParams()
+            .add("sec_user_id", authorSecUid)
+            .add("max_cursor", cursor.coerceAtLeast(0))
+            .add("min_cursor", 0)
+            .add("count", count.coerceIn(1, 20))
+            .add("whale_cut_token", "")
+            .add("cut_version", 1)
+            .add("publish_video_strategy_type", 2)
+        val request = requestBuilder(
+            url = "$WEB_HOST/aweme/v1/web/aweme/favorite/?" + params.sign(signer),
+            referer = "$WEB_HOST/user/$authorSecUid?from_tab_name=main&showTab=favorite",
+        ).get().build()
+        val response = json.decodeFromString<VideoListResponse>(
+            executeText(request, emptyMessage = "博主未公开喜欢列表"),
+        )
+        if (response.status_code != 0) {
+            throw ApiException(
+                response.status_msg ?: "博主喜欢列表接口返回 ${response.status_code}",
+            )
+        }
+        VideoPage(
+            videos = response.aweme_list.orEmpty().mapNotNull(::mapVideo),
+            cursor = response.max_cursor.takeIf { it > 0L } ?: response.cursor,
+            hasMore = response.has_more != 0,
+        )
+    }
+
+    suspend fun loadAuthorCollections(
+        authorSecUid: String,
+        cursor: Long = 0,
+        count: Int = 20,
+    ): CollectionPage = withContext(Dispatchers.IO) {
+        if (authorSecUid.isBlank()) throw ApiException("作者信息不完整")
+        ensureTtwid()
+        val params = commonWebParams()
+            .add("sec_user_id", authorSecUid)
+            .add("cursor", cursor.coerceAtLeast(0))
+            .add("count", count.coerceIn(1, 20))
+            .add("req_from", "channel_pc_web")
+        val request = requestBuilder(
+            url = "$WEB_HOST/aweme/v1/web/mix/list/?" + params.sign(signer),
+            referer = "$WEB_HOST/user/$authorSecUid?from_tab_name=main&showTab=collection",
+        ).get().build()
+        val response = json.decodeFromString<MixListResponse>(executeText(request))
+        if (response.status_code != 0) {
+            throw ApiException(
+                response.status_msg ?: "博主合集列表接口返回 ${response.status_code}",
+            )
+        }
+        val data = response.data
+        val items = response.mix_infos.orEmpty() + data?.mix_infos.orEmpty()
+        CollectionPage(
+            collections = items.mapNotNull(::mapCollection),
+            cursor = data?.max_cursor?.takeIf { it > 0L }
+                ?: data?.cursor?.takeIf { it > 0L }
+                ?: response.max_cursor.takeIf { it > 0L }
+                ?: response.cursor,
+            hasMore = (data?.has_more ?: response.has_more) != 0,
+        )
+    }
+
+    suspend fun loadCollectionVideos(
+        mixId: String,
+        cursor: Long = 0,
+        count: Int = 20,
+    ): VideoPage = withContext(Dispatchers.IO) {
+        if (mixId.isBlank()) throw ApiException("合集信息不完整")
+        ensureTtwid()
+        val params = commonWebParams()
+            .add("mix_id", mixId)
+            .add("cursor", cursor.coerceAtLeast(0))
+            .add("count", count.coerceIn(1, 20))
+        val request = requestBuilder(
+            url = "$WEB_HOST/aweme/v1/web/mix/aweme/?" + params.sign(signer),
+            referer = "$WEB_HOST/collection/$mixId",
+        ).get().build()
+        val response = json.decodeFromString<VideoListResponse>(executeText(request))
+        if (response.status_code != 0) {
+            throw ApiException(
+                response.status_msg ?: "合集视频接口返回 ${response.status_code}",
+            )
+        }
+        VideoPage(
+            videos = response.aweme_list.orEmpty().mapNotNull(::mapVideo),
+            cursor = response.max_cursor.takeIf { it > 0L } ?: response.cursor,
+            hasMore = response.has_more != 0,
+        )
+    }
+
+    suspend fun searchVideos(
+        keyword: String,
+        cursor: Long = 0,
+        searchId: String = "",
+        backtrace: String = "",
+        count: Int = 20,
+    ): SearchPage = withContext(Dispatchers.IO) {
+        val queryText = keyword.trim()
+        if (queryText.isBlank()) throw ApiException("请输入搜索关键词")
+        ensureTtwid()
+        val params = commonWebParams()
+            .add("search_channel", "aweme_video_web")
+            .add("keyword", queryText)
+            .add("query_correct_type", 1)
+            .add("offset", cursor.coerceAtLeast(0))
+            .add("count", count.coerceIn(1, 20))
+            .add("need_filter_settings", 0)
+            .add("enable_history", 1)
+            .add("search_source", "tab_search")
+            .add("list_type", "single")
+            .add("is_filter_search", 0)
+            .add("from_group_id", "")
+            .add("disable_rs", 0)
+        if (searchId.isNotBlank()) params.add("search_id", searchId)
+        if (backtrace.isNotBlank()) params.add("backtrace", backtrace)
+        val request = requestBuilder(
+            url = "$WEB_HOST/aweme/v1/web/general/search/single/?" + params.sign(signer),
+            referer = "$WEB_HOST/search",
+        ).get().build()
+        val response = json.decodeFromString<SearchResponse>(executeText(request))
+        if (response.status_code != 0) {
+            throw ApiException(
+                response.status_msg ?: "搜索接口返回 ${response.status_code}",
+            )
+        }
+        val nextPage = response.business_config?.next_page
+        SearchPage(
+            videos = (response.data.orEmpty() + response.search_item_list.orEmpty())
+                .mapNotNull(SearchItemDto::aweme_info)
+                .mapNotNull(::mapVideo)
+                .distinctBy(ShortVideo::id),
+            cursor = nextPage?.cursor?.takeIf { it > 0L }
+                ?: nextPage?.offset?.takeIf { it > 0L }
+                ?: response.cursor,
+            hasMore = ((response.business_config?.has_more ?: response.has_more) != 0),
+            searchId = nextPage?.search_id.orEmpty(),
+            backtrace = nextPage?.backtrace.orEmpty(),
+            verificationRequired = response.search_nil_info?.search_nil_type == "verify_check",
         )
     }
 
@@ -465,7 +615,10 @@ class DouyinApi(
         return first.substring(separator + 1).takeIf { it.isNotBlank() }
     }
 
-    private fun executeText(request: Request): String {
+    private fun executeText(
+        request: Request,
+        emptyMessage: String = "接口返回为空，请稍后重试",
+    ): String {
         try {
             client.newCall(request).execute().use { response ->
                 val body = response.body?.string().orEmpty()
@@ -473,7 +626,7 @@ class DouyinApi(
                     throw ApiException("网络请求失败：HTTP ${response.code}")
                 }
                 if (body.isBlank()) {
-                    throw ApiException("接口返回为空，请稍后重试")
+                    throw ApiException(emptyMessage)
                 }
                 return body
             }
@@ -510,6 +663,33 @@ class DouyinApi(
         )
     }
 
+    private fun mapCollection(dto: MixInfoDto): VideoCollection? {
+        val mixId = dto.mix_id.trim()
+        if (mixId.isBlank()) return null
+        val stats = dto.statis ?: dto.stats ?: dto.statistics
+        val cover = dto.cover_url ?: dto.cover
+        return VideoCollection(
+            id = mixId,
+            name = listOf(dto.mix_name, dto.name, dto.title)
+                .firstOrNull { it.isNotBlank() }
+                ?.trim()
+                ?: "未命名合集",
+            description = listOf(dto.desc, dto.mix_desc)
+                .firstOrNull { it.isNotBlank() }
+                .orEmpty()
+                .trim(),
+            coverUrl = cover?.url_list?.firstOrNull()?.let(::forceHttps),
+            videoCount = stats?.updated_to_episode?.takeIf { it > 0 }
+                ?: dto.aweme_count.takeIf { it > 0 }
+                ?: dto.video_count.takeIf { it > 0 }
+                ?: stats?.total?.takeIf { it > 0 }
+                ?: 0,
+            playCount = stats?.play_vv?.takeIf { it > 0L }
+                ?: stats?.play_count
+                ?: 0L,
+        )
+    }
+
     private fun mapUserProfile(dto: UserProfileDto): UserProfile = UserProfile(
         nickname = dto.nickname.trim().ifBlank { "抖音用户" },
         uniqueId = dto.unique_id.trim().ifBlank { dto.short_id.trim() },
@@ -518,6 +698,7 @@ class DouyinApi(
         followerCount = dto.follower_count,
         followingCount = dto.following_count,
         totalFavorited = dto.total_favorited,
+        likingCount = dto.favoriting_count,
         signature = dto.signature.trim(),
     )
 

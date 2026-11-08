@@ -45,6 +45,7 @@ data class UserProfileDto(
     val follower_count: Long = 0,
     val following_count: Long = 0,
     val total_favorited: Long = 0,
+    val favoriting_count: Long = 0,
     val signature: String = "",
 )
 
@@ -81,6 +82,97 @@ data class AuthorPostResponse(
     val cursor: Long = 0,
     val max_cursor: Long = 0,
     val has_more: Int = 0,
+)
+
+@Serializable
+data class VideoListResponse(
+    val status_code: Int = 0,
+    val status_msg: String? = null,
+    val aweme_list: List<AwemeDto>? = null,
+    val cursor: Long = 0,
+    val max_cursor: Long = 0,
+    val has_more: Int = 0,
+)
+
+@Serializable
+data class MixListResponse(
+    val status_code: Int = 0,
+    val status_msg: String? = null,
+    val mix_infos: List<MixInfoDto>? = null,
+    val data: MixListDataDto? = null,
+    val cursor: Long = 0,
+    val max_cursor: Long = 0,
+    val has_more: Int = 0,
+)
+
+@Serializable
+data class MixListDataDto(
+    val mix_infos: List<MixInfoDto>? = null,
+    val cursor: Long = 0,
+    val max_cursor: Long = 0,
+    val has_more: Int = 0,
+)
+
+@Serializable
+data class MixInfoDto(
+    val mix_id: String = "",
+    val mix_name: String = "",
+    val name: String = "",
+    val title: String = "",
+    val desc: String = "",
+    val mix_desc: String = "",
+    val cover_url: UrlListDto? = null,
+    val cover: UrlListDto? = null,
+    val statis: MixStatsDto? = null,
+    val stats: MixStatsDto? = null,
+    val statistics: MixStatsDto? = null,
+    val aweme_count: Int = 0,
+    val video_count: Int = 0,
+)
+
+@Serializable
+data class MixStatsDto(
+    val play_vv: Long = 0,
+    val play_count: Long = 0,
+    val updated_to_episode: Int = 0,
+    val total: Int = 0,
+)
+
+@Serializable
+data class SearchResponse(
+    val status_code: Int = 0,
+    val status_msg: String? = null,
+    val data: List<SearchItemDto>? = null,
+    val search_item_list: List<SearchItemDto>? = null,
+    val cursor: Long = 0,
+    val has_more: Int = 0,
+    val business_config: SearchBusinessConfigDto? = null,
+    val search_nil_info: SearchNilInfoDto? = null,
+)
+
+@Serializable
+data class SearchBusinessConfigDto(
+    val has_more: Int = 0,
+    val next_page: SearchNextPageDto? = null,
+)
+
+@Serializable
+data class SearchNextPageDto(
+    val cursor: Long = 0,
+    val offset: Long = 0,
+    val search_id: String = "",
+    val backtrace: String = "",
+)
+
+@Serializable
+data class SearchNilInfoDto(
+    val search_nil_type: String = "",
+)
+
+@Serializable
+data class SearchItemDto(
+    val type: Int = 0,
+    val aweme_info: AwemeDto? = null,
 )
 
 @Serializable

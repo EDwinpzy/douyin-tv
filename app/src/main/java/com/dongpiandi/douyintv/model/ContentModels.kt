@@ -51,6 +51,30 @@ data class VideoPage(
     val hasMore: Boolean,
 )
 
+data class VideoCollection(
+    val id: String,
+    val name: String,
+    val description: String,
+    val coverUrl: String?,
+    val videoCount: Int,
+    val playCount: Long,
+)
+
+data class CollectionPage(
+    val collections: List<VideoCollection>,
+    val cursor: Long,
+    val hasMore: Boolean,
+)
+
+data class SearchPage(
+    val videos: List<ShortVideo>,
+    val cursor: Long,
+    val hasMore: Boolean,
+    val searchId: String,
+    val backtrace: String,
+    val verificationRequired: Boolean = false,
+)
+
 data class UserProfile(
     val nickname: String,
     val uniqueId: String,
@@ -59,6 +83,7 @@ data class UserProfile(
     val followerCount: Long,
     val followingCount: Long,
     val totalFavorited: Long,
+    val likingCount: Long,
     val signature: String,
 )
 
