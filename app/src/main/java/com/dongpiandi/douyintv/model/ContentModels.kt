@@ -4,13 +4,23 @@ data class ShortVideo(
     val id: String,
     val description: String,
     val authorName: String,
+    val authorSecUid: String,
     val authorAvatarUrl: String?,
     val playUrls: List<String>,
     val coverUrl: String?,
+    val videoWidth: Int = 0,
+    val videoHeight: Int = 0,
     val durationMs: Long,
     val likeCount: Long,
     val commentCount: Long,
-)
+) {
+    val aspectRatio: Float?
+        get() = if (videoWidth > 0 && videoHeight > 0) {
+            videoWidth.toFloat() / videoHeight.toFloat()
+        } else {
+            null
+        }
+}
 
 data class ShortComment(
     val id: String,
@@ -33,6 +43,22 @@ data class CommentPage(
     val cursor: Long,
     val hasMore: Boolean,
     val total: Long,
+)
+
+data class VideoPage(
+    val videos: List<ShortVideo>,
+    val cursor: Long,
+    val hasMore: Boolean,
+)
+
+data class UserProfile(
+    val nickname: String,
+    val uniqueId: String,
+    val avatarUrl: String?,
+    val followerCount: Long,
+    val followingCount: Long,
+    val totalFavorited: Long,
+    val signature: String,
 )
 
 data class LiveRoom(

@@ -8,6 +8,8 @@ import com.dongpiandi.douyintv.model.LivePlayback
 import com.dongpiandi.douyintv.model.LiveRoom
 import com.dongpiandi.douyintv.model.ShortComment
 import com.dongpiandi.douyintv.model.ShortVideo
+import com.dongpiandi.douyintv.model.UserProfile
+import com.dongpiandi.douyintv.model.VideoPage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -117,6 +119,137 @@ class DouyinApi(
             .mapNotNull(::mapDanmaku)
             .sortedBy(DanmakuMessage::offsetMs)
     }
+
+    suspend fun loadFavoriteVideos(
+        cursor: Long = 0,
+        count: Int = 20,
+    ): VideoPage = withContext(Dispatchers.IO) {
+        ensureTtwid()
+        val body = SignedParams()
+            .add("count", count.coerceIn(1, 20))
+            .add("cursor", cursor.coerceAtLeast(0))
+            .encoded()
+        val params = commonWebParams()
+        val request = requestBuilder(
+            url = "$WEB_HOST/aweme/v1/web/aweme/listcollection/?" +
+                params.sign(signer),
+            referer =
+                "$WEB_HOST/user/self?from_tab_name=main&showTab=favorite_collection",
+        )
+            .header("Origin", WEB_HOST)
+            .post(body.toRequestBody(FORM_MEDIA_TYPE))
+            .build()
+        val response = json.decodeFromString<FavoriteListResponse>(executeText(request))
+        if (response.status_code != 0) {
+            throw ApiException(response.status_msg ?: "收藏列表接口返回 ${response.status_code}")
+        }
+        VideoPage(
+            videos = response.aweme_list.orEmpty().mapNotNull(::mapVideo),
+            cursor = response.max_cursor.takeIf { it > 0L } ?: response.cursor,
+            hasMore = response.has_more != 0,
+        )
+    }
+
+    suspend fun setFavorite(
+        awemeId: String,
+        favorite: Boolean,
+    ) = withContext(Dispatchers.IO) {
+        require(awemeId.isNotBlank()) { "视频标识不能为空" }
+        ensureTtwid()
+        val body = SignedParams()
+            .add("action", if (favorite) 1 else 0)
+            .add("aweme_id", awemeId)
+            .add("aweme_type", 0)
+            .encoded()
+        val params = commonWebParams()
+        val request = requestBuilder(
+            url = "$WEB_HOST/aweme/v1/web/aweme/collect/?" +
+                params.sign(signer),
+            referer = if (favorite) {
+                "$WEB_HOST/?recommend=1"
+            } else {
+                "$WEB_HOST/user/self?from_tab_name=main&showTab=favorite_collection"
+            },
+        )
+            .header("Origin", WEB_HOST)
+            .post(body.toRequestBody(FORM_MEDIA_TYPE))
+            .build()
+        val response = json.decodeFromString<FavoriteActionResponse>(executeText(request))
+        if (response.status_code != 0) {
+            throw ApiException(response.status_msg ?: "收藏操作返回 ${response.status_code}")
+        }
+    }
+
+    suspend fun loadAuthorVideos(
+        authorSecUid: String,
+        cursor: Long = 0,
+        count: Int = 20,
+    ): VideoPage = withContext(Dispatchers.IO) {
+        if (authorSecUid.isBlank()) throw ApiException("作者信息不完整")
+        ensureTtwid()
+        val params = commonWebParams()
+            .add("sec_user_id", authorSecUid)
+            .add("max_cursor", cursor.coerceAtLeast(0))
+            .add("count", count.coerceIn(1, 20))
+            .add("locate_item_id", "")
+            .add("locate_query", "false")
+            .add("show_live_replay_strategy", 1)
+            .add("need_time_list", 1)
+            .add("time_list_query", 0)
+            .add("publish_video_strategy_type", 2)
+        val request = requestBuilder(
+            url = "$WEB_HOST/aweme/v1/web/aweme/post/?" + params.sign(signer),
+            referer = "$WEB_HOST/user/$authorSecUid",
+        ).get().build()
+        val response = json.decodeFromString<AuthorPostResponse>(executeText(request))
+        if (response.status_code != 0) {
+            throw ApiException(response.status_msg ?: "博主视频接口返回 ${response.status_code}")
+        }
+        VideoPage(
+            videos = response.aweme_list.orEmpty().mapNotNull(::mapVideo),
+            cursor = response.max_cursor.takeIf { it > 0L } ?: response.cursor,
+            hasMore = response.has_more != 0,
+        )
+    }
+
+    suspend fun loadSelfProfile(): UserProfile = withContext(Dispatchers.IO) {
+        ensureTtwid()
+        val params = commonWebParams()
+            .add("publish_video_strategy_type", 2)
+            .add("personal_center_strategy", 1)
+        val request = requestBuilder(
+            url = "$WEB_HOST/aweme/v1/web/user/profile/self/?" + params.sign(signer),
+            referer = "$WEB_HOST/user/self",
+        ).get().build()
+        val response = json.decodeFromString<UserProfileResponse>(executeText(request))
+        if (response.status_code != 0) {
+            throw ApiException(response.status_msg ?: "账号资料接口返回 ${response.status_code}")
+        }
+        response.user?.let(::mapUserProfile)
+            ?: throw ApiException("账号资料暂时不可用")
+    }
+
+    suspend fun loadAuthorProfile(authorSecUid: String): UserProfile =
+        withContext(Dispatchers.IO) {
+            if (authorSecUid.isBlank()) throw ApiException("作者信息不完整")
+            ensureTtwid()
+            val params = commonWebParams()
+                .add("sec_user_id", authorSecUid)
+                .add("publish_video_strategy_type", 2)
+                .add("personal_center_strategy", 1)
+            val request = requestBuilder(
+                url = "$WEB_HOST/aweme/v1/web/user/profile/other/?" + params.sign(signer),
+                referer = "$WEB_HOST/user/$authorSecUid",
+            ).get().build()
+            val response = json.decodeFromString<UserProfileResponse>(executeText(request))
+            if (response.status_code != 0) {
+                throw ApiException(
+                    response.status_msg ?: "博主资料接口返回 ${response.status_code}",
+                )
+            }
+            response.user?.let(::mapUserProfile)
+                ?: throw ApiException("博主资料暂时不可用")
+        }
 
     suspend fun loadLiveRooms(): List<LiveRoom> = withContext(Dispatchers.IO) {
         val params = commonLiveParams()
@@ -235,9 +368,10 @@ class DouyinApi(
         add("effective_type", "4g")
         add("round_trip_time", 0)
         add("webid", identityStore.webId)
-        add("uifid", identityStore.uifid)
+        add("uifid", uifidValue())
         add("verifyFp", identityStore.verifyFp)
         add("fp", identityStore.verifyFp)
+        add("msToken", sessionCookieValue("msToken") ?: identityStore.msToken)
     }
 
     private fun commonLiveParams(): SignedParams = SignedParams().apply {
@@ -272,7 +406,18 @@ class DouyinApi(
             .url(url)
             .header("User-Agent", USER_AGENT)
             .header("Accept", "application/json, text/plain, */*")
+            .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
             .header("Referer", referer)
+            .header("uifid", uifidValue())
+            .header("x-tt-argus", "1")
+            .header("sec-fetch-site", "same-origin")
+            .header("sec-fetch-mode", "cors")
+            .header("sec-fetch-dest", "empty")
+            .header("sec-ch-ua-mobile", "?0")
+            .header("sec-ch-ua-platform", "\"Windows\"")
+            .header("priority", "u=1, i")
+            .header("pragma", "no-cache")
+            .header("cache-control", "no-cache")
             .header("x-secsdk-csrf-token", "DOWNGRADE")
         val cookie = cookieOverride ?: mergedCookie(identityStore.ttwid())
         if (cookie.isNotBlank()) builder.header("Cookie", cookie)
@@ -290,8 +435,20 @@ class DouyinApi(
         if ("s_v_web_id" !in entries) {
             entries["s_v_web_id"] = identityStore.verifyFp
         }
+        if ("msToken" !in entries) {
+            entries["msToken"] = identityStore.msToken
+        }
         return entries.entries.joinToString("; ") { "${it.key}=${it.value}" }
     }
+
+    private fun sessionCookieValue(name: String): String? =
+        parseCookieHeader(sessionStore.cookieHeader().orEmpty())
+            .firstOrNull { it.first == name }
+            ?.second
+            ?.takeIf(String::isNotBlank)
+
+    private fun uifidValue(): String =
+        sessionCookieValue("UIFID") ?: identityStore.uifid
 
     private fun parseCookieHeader(header: String): List<Pair<String, String>> =
         header.split(';').mapNotNull { part ->
@@ -341,14 +498,27 @@ class DouyinApi(
             id = dto.aweme_id,
             description = dto.desc.trim(),
             authorName = dto.author?.nickname.orEmpty().trim(),
+            authorSecUid = dto.author?.sec_uid.orEmpty().trim(),
             authorAvatarUrl = dto.author?.avatar_thumb?.url_list?.firstOrNull()?.let(::forceHttps),
             playUrls = playUrls,
             coverUrl = dto.video?.cover?.url_list?.firstOrNull()?.let(::forceHttps),
+            videoWidth = dto.video?.width ?: 0,
+            videoHeight = dto.video?.height ?: 0,
             durationMs = dto.video?.duration ?: 0,
             likeCount = dto.statistics?.digg_count ?: 0,
             commentCount = dto.statistics?.comment_count ?: 0,
         )
     }
+
+    private fun mapUserProfile(dto: UserProfileDto): UserProfile = UserProfile(
+        nickname = dto.nickname.trim().ifBlank { "抖音用户" },
+        uniqueId = dto.unique_id.trim().ifBlank { dto.short_id.trim() },
+        avatarUrl = dto.avatar_thumb?.url_list?.firstOrNull()?.let(::forceHttps),
+        followerCount = dto.follower_count,
+        followingCount = dto.following_count,
+        totalFavorited = dto.total_favorited,
+        signature = dto.signature.trim(),
+    )
 
     private fun mapComment(dto: CommentDto): ShortComment? {
         val text = dto.text.trim()
@@ -415,6 +585,7 @@ class DouyinApi(
         private const val WEB_HOST = "https://www.douyin.com"
         private const val IES_HOST = "https://www.iesdouyin.com"
         private const val LIVE_HOST = "https://live.douyin.com"
+        private val FORM_MEDIA_TYPE = "application/x-www-form-urlencoded".toMediaType()
     }
 }
 

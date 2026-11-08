@@ -5,17 +5,26 @@ internal object ShortsPreloadPolicy {
 
     private const val RETAIN_PREVIOUS_COUNT = 1
 
-    fun forwardIndices(currentIndex: Int, size: Int): IntRange {
+    fun forwardIndices(
+        currentIndex: Int,
+        size: Int,
+        forwardCount: Int = FORWARD_COUNT,
+    ): IntRange {
         if (size <= 0 || currentIndex !in 0 until size) return IntRange.EMPTY
+        if (forwardCount <= 0) return IntRange.EMPTY
         val first = currentIndex + 1
-        val last = (currentIndex + FORWARD_COUNT).coerceAtMost(size - 1)
+        val last = (currentIndex + forwardCount).coerceAtMost(size - 1)
         return if (first > last) IntRange.EMPTY else first..last
     }
 
-    fun retainedIndices(currentIndex: Int, size: Int): IntRange {
+    fun retainedIndices(
+        currentIndex: Int,
+        size: Int,
+        forwardCount: Int = FORWARD_COUNT,
+    ): IntRange {
         if (size <= 0 || currentIndex !in 0 until size) return IntRange.EMPTY
         val first = (currentIndex - RETAIN_PREVIOUS_COUNT).coerceAtLeast(0)
-        val last = (currentIndex + FORWARD_COUNT).coerceAtMost(size - 1)
+        val last = (currentIndex + forwardCount.coerceAtLeast(0)).coerceAtMost(size - 1)
         return first..last
     }
 

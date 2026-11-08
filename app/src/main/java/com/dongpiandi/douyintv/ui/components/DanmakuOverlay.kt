@@ -12,10 +12,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
@@ -24,9 +20,9 @@ import androidx.media3.common.Player
 import com.dongpiandi.douyintv.model.DanmakuMessage
 import kotlinx.coroutines.delay
 
-private const val LANE_COUNT = 5
-private const val TRAVEL_DURATION_MS = 7_000L
-private const val REFRESH_INTERVAL_MS = 33L
+private const val LANE_COUNT = 3
+private const val TRAVEL_DURATION_MS = 11_000L
+private const val DEFAULT_REFRESH_INTERVAL_MS = 33L
 
 internal data class ScheduledDanmaku(
     val message: DanmakuMessage,
@@ -66,27 +62,27 @@ fun DanmakuOverlay(
     messages: List<DanmakuMessage>,
     player: Player,
     modifier: Modifier = Modifier,
+    refreshIntervalMs: Long = DEFAULT_REFRESH_INTERVAL_MS,
 ) {
     var positionMs by remember { mutableLongStateOf(player.currentPosition.coerceAtLeast(0)) }
+    val safeRefreshIntervalMs = refreshIntervalMs.coerceAtLeast(16L)
 
-    LaunchedEffect(player, messages.isEmpty()) {
+    LaunchedEffect(player, messages.isEmpty(), safeRefreshIntervalMs) {
         if (messages.isEmpty()) return@LaunchedEffect
         while (true) {
             val nextPosition = player.currentPosition.coerceAtLeast(0)
             if (nextPosition != positionMs) {
                 positionMs = nextPosition
             }
-            delay(if (player.isPlaying) REFRESH_INTERVAL_MS else 120L)
+            delay(if (player.isPlaying) safeRefreshIntervalMs else 120L)
         }
     }
 
     val lanes = remember(messages) { scheduleDanmaku(messages) }
     val density = LocalDensity.current
-    val textSize = with(density) { 15.sp.toPx() }
-    val maxPillHeight = with(density) { 25.dp.toPx() }
-    val horizontalPadding = with(density) { 10.dp.toPx() }
-    val preferredCornerRadius = with(density) { 12.dp.toPx() }
-    val bubbleColor = Color.Black.copy(alpha = 0.56f)
+    val textSize = with(density) { 20.sp.toPx() }
+    val horizontalPadding = with(density) { 8.dp.toPx() }
+    val shadowOffset = with(density) { 1.5.dp.toPx() }
     val textPaint = remember(textSize) {
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = android.graphics.Color.WHITE
@@ -94,6 +90,14 @@ fun DanmakuOverlay(
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         }
     }
+    val shadowPaint = remember(textSize, shadowOffset) {
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.argb(188, 0, 0, 0)
+            this.textSize = textSize
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        }
+    }
+    val textWidthCache = remember(messages, textPaint) { mutableMapOf<String, Float>() }
 
     Canvas(
         modifier = modifier
@@ -103,8 +107,6 @@ fun DanmakuOverlay(
         if (lanes.isEmpty()) return@Canvas
         val currentPosition = positionMs
         val laneHeight = size.height / lanes.size
-        val pillHeight = minOf(maxPillHeight, (laneHeight - 2.dp.toPx()).coerceAtLeast(1f))
-        val cornerRadius = minOf(preferredCornerRadius, pillHeight / 2f)
 
         lanes.forEachIndexed { laneIndex, laneMessages ->
             val scheduled = laneMessages.lastOrNull { item ->
@@ -116,17 +118,18 @@ fun DanmakuOverlay(
             val text = scheduled.message.text.replace('\n', ' ').let {
                 if (it.length > 42) it.take(41) + "…" else it
             }
-            val textWidth = textPaint.measureText(text)
+            val textWidth = textWidthCache.getOrPut(text) {
+                textPaint.measureText(text)
+            }
             val travel = size.width + textWidth + horizontalPadding * 2
             val x = size.width + horizontalPadding - progress * travel
-            val top = laneIndex * laneHeight + (laneHeight - pillHeight) / 2f
-            val baseline = top + pillHeight / 2f -
+            val baseline = laneIndex * laneHeight + laneHeight / 2f -
                 (textPaint.ascent() + textPaint.descent()) / 2f
-            drawRoundRect(
-                color = bubbleColor,
-                topLeft = Offset(x - horizontalPadding, top),
-                size = Size(textWidth + horizontalPadding * 2, pillHeight),
-                cornerRadius = CornerRadius(cornerRadius, cornerRadius),
+            drawContext.canvas.nativeCanvas.drawText(
+                text,
+                x + shadowOffset,
+                baseline + shadowOffset,
+                shadowPaint,
             )
             drawContext.canvas.nativeCanvas.drawText(text, x, baseline, textPaint)
         }

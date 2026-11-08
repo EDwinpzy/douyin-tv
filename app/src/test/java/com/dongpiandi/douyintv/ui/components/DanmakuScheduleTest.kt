@@ -7,6 +7,22 @@ import org.junit.Test
 
 class DanmakuScheduleTest {
     @Test
+    fun defaultsToThreeVisibleLanes() {
+        val messages = List(6) { index ->
+            DanmakuMessage(
+                id = "danmaku-$index",
+                text = "第 $index 条弹幕",
+                offsetMs = index * 250L,
+            )
+        }
+
+        val lanes = scheduleDanmaku(messages)
+
+        assertEquals(3, lanes.size)
+        assertEquals(messages.size, lanes.sumOf { it.size })
+    }
+
+    @Test
     fun keepsEveryLaneWindowSeparated() {
         val messages = List(12) { index ->
             DanmakuMessage(
