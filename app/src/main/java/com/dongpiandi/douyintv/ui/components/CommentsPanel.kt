@@ -40,6 +40,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -51,6 +52,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.dongpiandi.douyintv.model.ShortComment
 import com.dongpiandi.douyintv.ui.formatCount
@@ -62,11 +64,7 @@ import com.dongpiandi.douyintv.ui.theme.TextPrimary
 import com.dongpiandi.douyintv.ui.theme.TextSecondary
 import kotlinx.coroutines.delay
 
-internal fun commentsPanelWidth(screenWidth: Dp): Dp = if (screenWidth < 1_100.dp) {
-    screenWidth * 0.55f
-} else {
-    (screenWidth * 0.4f).coerceAtMost(820.dp)
-}
+internal fun commentsPanelWidth(screenWidth: Dp): Dp = screenWidth * (1f / 3f)
 
 @Composable
 fun CommentsPanel(
@@ -116,11 +114,10 @@ fun CommentsPanel(
     }
 
     BoxWithConstraints(
-        modifier = modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.48f)),
+        modifier = modifier.fillMaxSize(),
     ) {
         val panelWidth = commentsPanelWidth(maxWidth)
+        val panelShape = RoundedCornerShape(topStart = 24.dp, bottomStart = 24.dp)
 
         Row(
             modifier = Modifier.fillMaxSize(),
@@ -136,8 +133,18 @@ fun CommentsPanel(
                 modifier = Modifier
                     .width(panelWidth)
                     .fillMaxHeight()
-                    .background(Color(0xF211141C))
-                    .padding(horizontal = 22.dp, vertical = 18.dp),
+                    .glassSurface(
+                        shape = panelShape,
+                        style = GlassStyle(
+                            top = Color(0xE61B2232),
+                            bottom = Color(0xD80B0E16),
+                            border = Color.White.copy(alpha = 0.22f),
+                            sheen = Color.White.copy(alpha = 0.13f),
+                            shadowAlpha = 0.5f,
+                        ),
+                        elevation = 16.dp,
+                    )
+                    .padding(horizontal = 18.dp, vertical = 16.dp),
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -147,14 +154,33 @@ fun CommentsPanel(
                         text = "评论 · ${formatCount(total)}",
                         modifier = Modifier.weight(1f),
                         color = TextPrimary,
-                        style = MaterialTheme.typography.headlineLarge,
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontSize = 17.sp,
+                            lineHeight = 21.sp,
+                        ),
+                        fontWeight = FontWeight.Bold,
                     )
                     CloseButton(
                         focusRequester = closeFocusRequester,
                         onClick = onClose,
                     )
                 }
-                Spacer(Modifier.height(14.dp))
+                Spacer(Modifier.height(11.dp))
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(
+                                    Color.Transparent,
+                                    Color.White.copy(alpha = 0.14f),
+                                    Color.Transparent,
+                                ),
+                            ),
+                        ),
+                )
+                Spacer(Modifier.height(10.dp))
 
                 when {
                     loading && comments.isEmpty() -> {
@@ -285,27 +311,30 @@ private fun CommentRow(
             .bringIntoViewRequester(bringIntoViewRequester)
             .onFocusChanged { focused = it.isFocused }
             .focusable(),
-        color = if (focused) PanelRaised else Color.White.copy(alpha = 0.035f),
+        color = if (focused) PanelRaised.copy(alpha = 0.94f) else Color.White.copy(alpha = 0.04f),
         shape = RoundedCornerShape(14.dp),
-        border = if (focused) BorderStroke(2.dp, FocusRing) else null,
+        border = BorderStroke(
+            if (focused) 1.5.dp else 1.dp,
+            if (focused) FocusRing else Color.White.copy(alpha = 0.055f),
+        ),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             if (comment.avatarUrl != null) {
                 AsyncImage(
                     model = comment.avatarUrl,
                     contentDescription = null,
                     modifier = Modifier
-                        .size(34.dp)
+                        .size(26.dp)
                         .clip(CircleShape),
                     contentScale = ContentScale.Crop,
                 )
             } else {
                 Box(
                     modifier = Modifier
-                        .size(34.dp)
+                        .size(26.dp)
                         .clip(CircleShape)
                         .background(Accent.copy(alpha = 0.28f)),
                 )
@@ -316,7 +345,10 @@ private fun CommentRow(
                         text = comment.nickname,
                         modifier = Modifier.weight(1f, fill = false),
                         color = TextSecondary,
-                        style = MaterialTheme.typography.labelLarge,
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontSize = 10.sp,
+                            lineHeight = 13.sp,
+                        ),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -325,7 +357,10 @@ private fun CommentRow(
                         Text(
                             text = comment.ipLabel,
                             color = TextSecondary.copy(alpha = 0.65f),
-                            style = MaterialTheme.typography.labelMedium,
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontSize = 9.sp,
+                                lineHeight = 11.sp,
+                            ),
                             maxLines = 1,
                         )
                     }
@@ -334,7 +369,10 @@ private fun CommentRow(
                 Text(
                     text = comment.text,
                     color = TextPrimary,
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp,
+                    ),
                     maxLines = 5,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -345,14 +383,20 @@ private fun CommentRow(
                             Text(
                                 text = "♥ ${formatCount(comment.likeCount)}",
                                 color = TextSecondary.copy(alpha = 0.76f),
-                                style = MaterialTheme.typography.labelMedium,
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontSize = 9.sp,
+                                    lineHeight = 11.sp,
+                                ),
                             )
                         }
                         if (comment.replyCount > 0) {
                             Text(
                                 text = "${formatCount(comment.replyCount)} 回复",
                                 color = TextSecondary.copy(alpha = 0.76f),
-                                style = MaterialTheme.typography.labelMedium,
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontSize = 9.sp,
+                                    lineHeight = 11.sp,
+                                ),
                             )
                         }
                     }

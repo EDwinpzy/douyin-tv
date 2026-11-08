@@ -21,6 +21,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -45,6 +46,10 @@ import com.dongpiandi.douyintv.ui.screens.LiveGridScreen
 import com.dongpiandi.douyintv.ui.screens.LivePlayerScreen
 import com.dongpiandi.douyintv.ui.screens.LoginScreen
 import com.dongpiandi.douyintv.ui.screens.ShortsScreen
+import com.dongpiandi.douyintv.ui.components.AuthorProfileSidebar
+import com.dongpiandi.douyintv.ui.components.MyHomeSidebar
+import com.dongpiandi.douyintv.performance.DevicePerformanceProfile
+import com.dongpiandi.douyintv.performance.LocalDevicePerformanceProfile
 import com.dongpiandi.douyintv.ui.theme.Accent
 import com.dongpiandi.douyintv.ui.theme.FocusRing
 import com.dongpiandi.douyintv.ui.theme.Ink
@@ -58,24 +63,31 @@ fun DouyinTvApp(viewModel: MainViewModel) {
     val context = LocalContext.current
     val activity = context.findActivity()
     val livePlayer = state.livePlayer
-
-    BackHandler {
-        when {
-            state.loginVisible -> viewModel.closeLogin()
-            state.accountMenuVisible -> viewModel.closeAccountMenu()
-            state.livePlayer != null -> viewModel.closeLivePlayer()
-            state.tab == MainTab.SHORTS && state.engagement.visible ->
-                viewModel.closeComments()
-            state.tab == MainTab.SHORTS && state.overlayVisible -> viewModel.hideOverlay()
-            else -> activity?.finish()
-        }
+    val performanceProfile = remember(context) {
+        DevicePerformanceProfile.detect(context)
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Ink),
+    CompositionLocalProvider(
+        LocalDevicePerformanceProfile provides performanceProfile,
     ) {
+        BackHandler {
+            when {
+                state.loginVisible -> viewModel.closeLogin()
+                state.accountMenuVisible -> viewModel.closeAccountMenu()
+                state.livePlayer != null -> viewModel.closeLivePlayer()
+                state.authorVideos.visible -> viewModel.closeAuthorVideos()
+                state.tab == MainTab.SHORTS && state.engagement.visible ->
+                    viewModel.closeComments()
+                state.tab == MainTab.SHORTS && state.overlayVisible -> viewModel.hideOverlay()
+                else -> activity?.finish()
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Ink),
+        ) {
         when {
             state.loginVisible -> {
                 LoginScreen(
@@ -97,10 +109,19 @@ fun DouyinTvApp(viewModel: MainViewModel) {
                     state = state.shorts,
                     engagement = state.engagement,
                     overlayVisible = state.overlayVisible,
+                    sidePanelVisible =
+                        state.accountMenuVisible || state.authorVideos.visible,
                     isLoggedIn = state.isLoggedIn,
                     onSelectTab = viewModel::selectTab,
                     onAccountClick = {
                         if (state.isLoggedIn) viewModel.showAccountMenu() else viewModel.openLogin()
+                    },
+                    onHistoryClick = {
+                        if (state.isLoggedIn) {
+                            viewModel.showAccountMenu(MyHomeTab.HISTORY)
+                        } else {
+                            viewModel.openLogin()
+                        }
                     },
                     onShowOverlay = viewModel::showOverlay,
                     onHideOverlay = viewModel::hideOverlay,
@@ -115,6 +136,11 @@ fun DouyinTvApp(viewModel: MainViewModel) {
                     onCloseComments = viewModel::closeComments,
                     onLoadMoreComments = viewModel::loadMoreComments,
                     onRetryComments = viewModel::retryComments,
+                    favoriteIds = state.favorites.ids,
+                    favoritePendingIds = state.favorites.pendingIds,
+                    onToggleFavorite = viewModel::toggleFavorite,
+                    onOpenAuthor = viewModel::openAuthorVideos,
+                    onPlaybackProgress = viewModel::recordPlaybackProgress,
                 )
             }
 
@@ -126,130 +152,65 @@ fun DouyinTvApp(viewModel: MainViewModel) {
                     onAccountClick = {
                         if (state.isLoggedIn) viewModel.showAccountMenu() else viewModel.openLogin()
                     },
+                    onHistoryClick = {
+                        if (state.isLoggedIn) {
+                            viewModel.showAccountMenu(MyHomeTab.HISTORY)
+                        } else {
+                            viewModel.openLogin()
+                        }
+                    },
                     onOpenRoom = viewModel::openLiveRoom,
                     onFocusRoom = viewModel::rememberLiveFocus,
                     onFocusRestored = viewModel::consumeLiveFocusRestore,
                     onRefresh = { viewModel.loadLiveRooms(reset = false) },
+                    focusEnabled = !state.accountMenuVisible,
                 )
             }
         }
 
-        if (state.accountMenuVisible) {
-            AccountOverlay(
-                isLoggedIn = state.isLoggedIn,
-                onLogin = viewModel::openLogin,
-                onLogout = viewModel::logout,
+            if (state.accountMenuVisible) {
+            MyHomeSidebar(
+                selectedTab = state.myHomeTab,
+                profile = state.myProfile,
+                history = state.history,
+                favorites = state.favorites.videos,
+                favoriteProgress = state.favorites.progress,
+                favoritesLoading = state.favorites.loading,
+                favoritesLoadingMore = state.favorites.loadingMore,
+                favoritesError = state.favorites.error,
+                favoritesHasMore = state.favorites.hasMore,
+                onTabSelected = viewModel::selectMyHomeTab,
                 onClose = viewModel::closeAccountMenu,
+                onRetryProfile = viewModel::retryMyProfile,
+                onRetryFavorites = viewModel::retryFavorites,
+                onLoadMoreFavorites = viewModel::loadMoreFavorites,
+                onPlayHistory = viewModel::playHistoryVideo,
+                onPlayFavorite = viewModel::playFavorite,
+                onLogout = viewModel::logout,
             )
         }
-    }
-}
 
-@Composable
-private fun AccountOverlay(
-    isLoggedIn: Boolean,
-    onLogin: () -> Unit,
-    onLogout: () -> Unit,
-    onClose: () -> Unit,
-) {
-    val closeFocusRequester = remember { FocusRequester() }
-    LaunchedEffect(Unit) { closeFocusRequester.requestFocus() }
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.68f)),
-        contentAlignment = Alignment.Center,
-    ) {
-        Column(
-            modifier = Modifier
-                .width(520.dp)
-                .background(Panel, RoundedCornerShape(26.dp))
-                .padding(32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text(
-                text = if (isLoggedIn) "账号已登录" else "尚未登录",
-                color = TextPrimary,
-                style = MaterialTheme.typography.headlineLarge,
+            if (state.authorVideos.visible) {
+            AuthorProfileSidebar(
+                profile = state.authorVideos.profile,
+                fallbackName = state.authorVideos.authorName,
+                fallbackAvatarUrl = state.authorVideos.authorAvatarUrl,
+                profileLoading = state.authorVideos.profileLoading,
+                profileError = state.authorVideos.profileError,
+                videos = state.authorVideos.videos,
+                progressByVideoId = state.authorVideos.progress,
+                loading = state.authorVideos.loading,
+                loadingMore = state.authorVideos.loadingMore,
+                error = state.authorVideos.error,
+                hasMore = state.authorVideos.hasMore,
+                onClose = viewModel::closeAuthorVideos,
+                onRetryProfile = viewModel::retryAuthorProfile,
+                onRetryVideos = viewModel::retryAuthorVideos,
+                onLoadMore = viewModel::loadMoreAuthorVideos,
+                onPlay = viewModel::playAuthorVideo,
             )
-            Spacer(Modifier.height(12.dp))
-            Text(
-                text = if (isLoggedIn) {
-                    "登录凭证已使用 Android Keystore 加密保存在本机"
-                } else {
-                    "使用抖音 App 扫码登录后，推荐内容会使用你的账号会话"
-                },
-                color = TextSecondary,
-                style = MaterialTheme.typography.bodyLarge,
-            )
-            Spacer(Modifier.height(24.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (isLoggedIn) {
-                    AccountButton(
-                        label = "退出登录",
-                        primary = true,
-                        onClick = onLogout,
-                    )
-                } else {
-                    AccountButton(
-                        label = "去登录",
-                        primary = true,
-                        onClick = onLogin,
-                    )
-                }
-                AccountButton(
-                    label = "关闭",
-                    focusRequester = closeFocusRequester,
-                    onClick = onClose,
-                )
             }
         }
-    }
-}
-
-@Composable
-private fun AccountButton(
-    label: String,
-    primary: Boolean = false,
-    focusRequester: FocusRequester? = null,
-    onClick: () -> Unit,
-) {
-    var focused by remember { mutableStateOf(false) }
-    Surface(
-        modifier = Modifier
-            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
-            .onFocusChanged { focused = it.isFocused }
-            .focusable()
-            .onPreviewKeyEvent { event ->
-                if (
-                    (event.key == Key.DirectionCenter || event.key == Key.Enter) &&
-                    event.type == KeyEventType.KeyDown
-                ) {
-                    if (event.nativeKeyEvent.repeatCount == 0) onClick()
-                    true
-                } else {
-                    false
-                }
-            },
-        color = when {
-            focused -> FocusRing
-            primary -> Accent
-            else -> Color(0xFF252B39)
-        },
-        shape = RoundedCornerShape(50),
-        border = BorderStroke(
-            2.dp,
-            if (focused) FocusRing else Color.Transparent,
-        ),
-    ) {
-        Text(
-            text = label,
-            modifier = Modifier.padding(horizontal = 26.dp, vertical = 13.dp),
-            color = if (focused) Color(0xFF17120B) else TextPrimary,
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.Bold,
-        )
     }
 }
 

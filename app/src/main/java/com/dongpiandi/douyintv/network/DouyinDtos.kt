@@ -24,7 +24,27 @@ data class AwemeDto(
 @Serializable
 data class AuthorDto(
     val nickname: String = "",
+    val sec_uid: String = "",
     val avatar_thumb: UrlListDto? = null,
+)
+
+@Serializable
+data class UserProfileResponse(
+    val status_code: Int = 0,
+    val status_msg: String? = null,
+    val user: UserProfileDto? = null,
+)
+
+@Serializable
+data class UserProfileDto(
+    val nickname: String = "",
+    val unique_id: String = "",
+    val short_id: String = "",
+    val avatar_thumb: UrlListDto? = null,
+    val follower_count: Long = 0,
+    val following_count: Long = 0,
+    val total_favorited: Long = 0,
+    val signature: String = "",
 )
 
 @Serializable
@@ -40,6 +60,32 @@ data class VideoDto(
 data class UrlListDto(
     val url_list: List<String> = emptyList(),
     val uri: String = "",
+)
+
+@Serializable
+data class FavoriteListResponse(
+    val status_code: Int = 0,
+    val status_msg: String? = null,
+    val aweme_list: List<AwemeDto>? = null,
+    val cursor: Long = 0,
+    val max_cursor: Long = 0,
+    val has_more: Int = 0,
+)
+
+@Serializable
+data class AuthorPostResponse(
+    val status_code: Int = 0,
+    val status_msg: String? = null,
+    val aweme_list: List<AwemeDto>? = null,
+    val cursor: Long = 0,
+    val max_cursor: Long = 0,
+    val has_more: Int = 0,
+)
+
+@Serializable
+data class FavoriteActionResponse(
+    val status_code: Int = 0,
+    val status_msg: String? = null,
 )
 
 @Serializable

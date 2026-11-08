@@ -71,4 +71,51 @@ class DouyinEngagementDtoTest {
         assertEquals(1200L, danmaku.offset_time)
         assertFalse(danmaku.danmaku_id.isBlank())
     }
+
+    @Test
+    fun parsesFavoritePageCursorAndAuthorSecUid() {
+        val response = json.decodeFromString<FavoriteListResponse>(
+            """
+            {
+              "status_code": 0,
+              "has_more": 1,
+              "max_cursor": 1720000000000,
+              "aweme_list": [
+                {
+                  "aweme_id": "favorite-1",
+                  "desc": "收藏视频",
+                  "author": {
+                    "nickname": "作者",
+                    "sec_uid": "MS4wLjABAAAA-test"
+                  },
+                  "video": {
+                    "play_addr": {
+                      "url_list": ["https://example.com/video.mp4"]
+                    },
+                    "duration": 32000
+                  }
+                }
+              ]
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals(0, response.status_code)
+        assertEquals(1, response.has_more)
+        assertEquals(1720000000000L, response.max_cursor)
+        assertEquals(
+            "MS4wLjABAAAA-test",
+            response.aweme_list.orEmpty().single().author?.sec_uid,
+        )
+    }
+
+    @Test
+    fun parsesFavoriteActionFailureMessage() {
+        val response = json.decodeFromString<FavoriteActionResponse>(
+            """{"status_code": 8, "status_msg": "请先登录"}""",
+        )
+
+        assertEquals(8, response.status_code)
+        assertEquals("请先登录", response.status_msg)
+    }
 }

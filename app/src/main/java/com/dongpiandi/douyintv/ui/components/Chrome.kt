@@ -1,7 +1,7 @@
+@file:OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+
 package com.dongpiandi.douyintv.ui.components
 
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -11,37 +11,53 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.LiveTv
+import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.dongpiandi.douyintv.R
 import com.dongpiandi.douyintv.ui.MainTab
 import com.dongpiandi.douyintv.ui.theme.Accent
+import com.dongpiandi.douyintv.ui.theme.FocusRing
 import com.dongpiandi.douyintv.ui.theme.TextPrimary
 import com.dongpiandi.douyintv.ui.theme.TextSecondary
 
@@ -52,215 +68,337 @@ fun TopChrome(
     onSelectTab: (MainTab) -> Unit,
     onAccountClick: () -> Unit,
     initialFocusRequester: FocusRequester? = null,
-    commentLabel: String? = null,
-    onCommentsClick: (() -> Unit)? = null,
     onUserInteraction: (() -> Unit)? = null,
+    showHeaderActions: Boolean = true,
+    onSearchClick: (() -> Unit)? = null,
+    downFocusRequester: FocusRequester? = null,
+    focusEnabled: Boolean = true,
 ) {
-    val fallbackRecommendFocusRequester = remember { FocusRequester() }
-    val recommendFocusRequester =
-        initialFocusRequester ?: fallbackRecommendFocusRequester
-    val liveFocusRequester = remember { FocusRequester() }
-    val commentsFocusRequester = remember { FocusRequester() }
-    val accountFocusRequester = remember { FocusRequester() }
-    val hasComments = commentLabel != null && onCommentsClick != null
+    val fallbackFocusRequester = remember { FocusRequester() }
+    val menuFocusRequester = initialFocusRequester ?: fallbackFocusRequester
+    val searchIndex = 2
+    val accountIndex = 3
+    val itemCount = if (showHeaderActions) accountIndex + 1 else 2
+    var menuFocused by remember { mutableStateOf(false) }
+    var focusedIndex by remember {
+        mutableIntStateOf(if (selectedTab == MainTab.SHORTS) 0 else 1)
+    }
 
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 30.dp, vertical = 18.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            GlassPill(
-                label = "推荐",
-                selected = selectedTab == MainTab.SHORTS,
-                focusRequester = recommendFocusRequester,
-                nextFocusRequester = liveFocusRequester,
-                onUserInteraction = onUserInteraction,
-                onClick = { onSelectTab(MainTab.SHORTS) },
-            )
-            GlassPill(
-                label = "直播",
-                selected = selectedTab == MainTab.LIVE,
-                focusRequester = liveFocusRequester,
-                previousFocusRequester = recommendFocusRequester,
-                nextFocusRequester = if (hasComments) {
-                    commentsFocusRequester
-                } else {
-                    accountFocusRequester
-                },
-                onUserInteraction = onUserInteraction,
-                onClick = { onSelectTab(MainTab.LIVE) },
-            )
-        }
-        Spacer(Modifier.weight(1f))
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (hasComments) {
-                GlassPill(
-                    label = commentLabel.orEmpty(),
-                    selected = false,
-                    focusRequester = commentsFocusRequester,
-                    previousFocusRequester = liveFocusRequester,
-                    nextFocusRequester = accountFocusRequester,
-                    onUserInteraction = onUserInteraction,
-                    onClick = { onCommentsClick?.invoke() },
-                )
-            }
-            GlassPill(
-                label = if (isLoggedIn) "账号 · 已登录" else "扫码登录",
-                selected = false,
-                focusRequester = accountFocusRequester,
-                previousFocusRequester = if (hasComments) {
-                    commentsFocusRequester
-                } else {
-                    liveFocusRequester
-                },
-                onUserInteraction = onUserInteraction,
-                onClick = onAccountClick,
-            )
+    LaunchedEffect(selectedTab, itemCount) {
+        if (!menuFocused) {
+            focusedIndex = if (selectedTab == MainTab.SHORTS) 0 else 1
+        } else if (focusedIndex !in 0 until itemCount) {
+            focusedIndex = 0
         }
     }
-}
 
-@Composable
-@OptIn(ExperimentalComposeUiApi::class)
-private fun GlassPill(
-    label: String,
-    selected: Boolean,
-    focusRequester: FocusRequester? = null,
-    previousFocusRequester: FocusRequester? = null,
-    nextFocusRequester: FocusRequester? = null,
-    onUserInteraction: (() -> Unit)? = null,
-    onClick: () -> Unit,
-) {
-    var focused by remember { mutableStateOf(false) }
-    val fillTop by animateColorAsState(
-        when {
-            focused -> Color.White.copy(alpha = 0.96f)
-            selected -> Accent.copy(alpha = 0.34f)
-            else -> Color.White.copy(alpha = 0.15f)
-        },
-        label = "pillFillTop",
-    )
-    val fillBottom by animateColorAsState(
-        when {
-            focused -> Color.White.copy(alpha = 0.76f)
-            selected -> Accent.copy(alpha = 0.16f)
-            else -> Color.White.copy(alpha = 0.055f)
-        },
-        label = "pillFillBottom",
-    )
-    val borderColor by animateColorAsState(
-        when {
-            focused -> Color.White.copy(alpha = 0.9f)
-            selected -> Accent.copy(alpha = 0.55f)
-            else -> Color.White.copy(alpha = 0.24f)
-        },
-        label = "pillBorder",
-    )
-    val scale by animateFloatAsState(
-        targetValue = if (focused) 1.045f else 1f,
-        label = "pillFocusScale",
-    )
-    val foreground by animateColorAsState(
-        when {
-            focused -> Color(0xFF0B0D12)
-            selected -> TextPrimary
-            else -> TextSecondary
-        },
-        label = "pillForeground",
-    )
-    val shape = RoundedCornerShape(50)
+    fun activate(index: Int) {
+        when (index) {
+            0 -> onSelectTab(MainTab.SHORTS)
+            1 -> onSelectTab(MainTab.LIVE)
+            searchIndex -> onSearchClick?.invoke()
+            accountIndex -> onAccountClick()
+        }
+    }
 
     Box(
         modifier = Modifier
-            .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-            }
-            .shadow(
-                elevation = if (focused) 10.dp else 0.dp,
-                shape = shape,
-                clip = false,
-            )
-            .clip(shape)
-            .background(
-                Brush.verticalGradient(
-                    listOf(fillTop, fillBottom),
-                ),
-            )
-            .border(BorderStroke(1.dp, borderColor), shape)
-            .then(
-                if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier,
-            )
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp, vertical = 14.dp)
+            .focusRequester(menuFocusRequester)
             .focusProperties {
-                left = previousFocusRequester ?: FocusRequester.Cancel
-                right = nextFocusRequester ?: FocusRequester.Cancel
+                if (downFocusRequester != null) down = downFocusRequester
             }
             .onFocusChanged {
-                if (it.isFocused && !focused) onUserInteraction?.invoke()
-                focused = it.isFocused
+                menuFocused = it.isFocused
+                if (it.isFocused) {
+                    focusedIndex = if (selectedTab == MainTab.SHORTS) 0 else 1
+                    onUserInteraction?.invoke()
+                }
             }
             .onPreviewKeyEvent { event ->
-                val isMenuKey = event.key == Key.DirectionLeft ||
-                    event.key == Key.DirectionRight ||
-                    event.key == Key.DirectionUp ||
-                    event.key == Key.DirectionDown
-                when {
-                    event.type == KeyEventType.KeyDown -> {
-                        onUserInteraction?.invoke()
-                        when (event.key) {
-                            Key.DirectionLeft -> {
-                                previousFocusRequester?.requestFocus()
-                                true
-                            }
-
-                            Key.DirectionRight -> {
-                                nextFocusRequester?.requestFocus()
-                                true
-                            }
-
-                            Key.DirectionUp -> {
-                                nextFocusRequester?.requestFocus()
-                                true
-                            }
-
-                            Key.DirectionDown -> {
-                                previousFocusRequester?.requestFocus()
-                                true
-                            }
-
-                            Key.DirectionCenter, Key.Enter -> {
-                                if (event.nativeKeyEvent.repeatCount == 0) onClick()
-                                true
-                            }
-
-                            else -> false
+                when (event.key) {
+                    Key.DirectionLeft, Key.DirectionRight -> {
+                        if (event.type == KeyEventType.KeyDown) {
+                            val step = if (event.key == Key.DirectionLeft) -1 else 1
+                            focusedIndex =
+                                Math.floorMod(focusedIndex + step, itemCount)
+                            onUserInteraction?.invoke()
                         }
+                        true
                     }
-                    isMenuKey || event.key == Key.DirectionCenter || event.key == Key.Enter -> {
+
+                    Key.DirectionCenter, Key.Enter -> {
+                        if (
+                            event.type == KeyEventType.KeyDown &&
+                            event.nativeKeyEvent.repeatCount == 0
+                        ) {
+                            activate(focusedIndex)
+                            onUserInteraction?.invoke()
+                        }
                         true
                     }
 
                     else -> false
                 }
             }
-            .focusable(),
+            .focusable(enabled = focusEnabled)
+            .semantics {
+                contentDescription = "顶部菜单"
+            },
     ) {
-        Box(Modifier.padding(horizontal = 20.dp, vertical = 10.dp)) {
-            Text(
-                text = label,
-                color = foreground,
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Bold,
+        BrandLogo(
+            modifier = Modifier.align(Alignment.CenterStart),
+        )
+
+        Row(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .glassSurface(
+                    shape = RoundedCornerShape(50),
+                    style = GlassStyle(
+                        top = Color(0xC7171C27),
+                        bottom = Color(0xA6080A11),
+                        border = Color.White.copy(alpha = 0.18f),
+                        sheen = Color.White.copy(alpha = 0.12f),
+                        shadowAlpha = 0.3f,
+                    ),
+                    elevation = 8.dp,
+                )
+                .padding(3.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            MainNavTab(
+                label = "推荐",
+                selected = selectedTab == MainTab.SHORTS,
+                focused = menuFocused && focusedIndex == 0,
+            )
+            MainNavTab(
+                label = "直播",
+                selected = selectedTab == MainTab.LIVE,
+                focused = menuFocused && focusedIndex == 1,
+                icon = {
+                    Icon(
+                        imageVector = Icons.Outlined.LiveTv,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                    )
+                },
             )
         }
+
+        if (showHeaderActions) {
+            HeaderActionStrip(
+                modifier = Modifier.align(Alignment.CenterEnd),
+                searchFocused = menuFocused && focusedIndex == searchIndex,
+                accountFocused = menuFocused && focusedIndex == accountIndex,
+            )
+        }
+    }
+}
+
+@Composable
+private fun BrandLogo(modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier.clearAndSetSemantics { },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier.size(26.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_tiktok_mark),
+                contentDescription = null,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .offset(x = (-1.2).dp, y = 1.4.dp),
+                tint = Color(0xFF25F4EE),
+            )
+            Icon(
+                painter = painterResource(R.drawable.ic_tiktok_mark),
+                contentDescription = null,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .offset(x = 1.2.dp, y = (-0.7).dp),
+                tint = Color(0xFFFE2C55),
+            )
+            Icon(
+                painter = painterResource(R.drawable.ic_tiktok_mark),
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                tint = Color.White,
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = "抖音TV",
+            color = TextPrimary,
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 0.2.sp,
+        )
+    }
+}
+
+@Composable
+private fun MainNavTab(
+    label: String,
+    selected: Boolean,
+    focused: Boolean,
+    icon: (@Composable () -> Unit)? = null,
+) {
+    val foreground = if (selected || focused) Color.White else TextSecondary
+    val shape = RoundedCornerShape(50)
+
+    Row(
+        modifier = Modifier
+            .width(106.dp)
+            .height(36.dp)
+            .clip(shape)
+            .then(
+                if (selected || focused) {
+                    Modifier.background(
+                        when {
+                            selected -> Brush.horizontalGradient(
+                                listOf(Color(0xFFE51D55), Color(0xFF9E123C)),
+                            )
+                            else -> Brush.horizontalGradient(
+                                listOf(
+                                    Color(0xFF5E1731),
+                                    Color(0xFF35101F),
+                                ),
+                            )
+                        },
+                    )
+                } else {
+                    Modifier
+                },
+            )
+            .border(
+                BorderStroke(
+                    width = if (focused) 1.5.dp else 1.dp,
+                    color = if (focused) {
+                        Color.White.copy(alpha = 0.94f)
+                    } else if (selected) {
+                        Color.White.copy(alpha = 0.22f)
+                    } else {
+                        Color.Transparent
+                    },
+                ),
+                shape,
+            ),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (icon != null) {
+            androidx.compose.runtime.CompositionLocalProvider(
+                androidx.compose.material3.LocalContentColor provides foreground,
+            ) {
+                icon()
+            }
+            Spacer(Modifier.width(6.dp))
+        }
+        Text(
+            text = label,
+            color = foreground,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+        )
+    }
+}
+
+@Composable
+private fun HeaderActionStrip(
+    modifier: Modifier = Modifier,
+    searchFocused: Boolean,
+    accountFocused: Boolean,
+) {
+    Row(
+        modifier = modifier
+            .height(36.dp)
+            .glassSurface(
+                shape = RoundedCornerShape(50),
+                style = GlassStyle(
+                    top = Color(0xB81A1E29),
+                    bottom = Color(0x94090B11),
+                    border = Color.White.copy(alpha = 0.15f),
+                    sheen = Color.White.copy(alpha = 0.1f),
+                    shadowAlpha = 0.26f,
+                ),
+                elevation = 7.dp,
+            )
+            .padding(horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        HeaderIconItem(
+            icon = Icons.Rounded.Search,
+            contentDescription = "搜索",
+            focused = searchFocused,
+        )
+        ActionDivider()
+        HeaderIconItem(
+            icon = Icons.Outlined.Person,
+            contentDescription = "我的主页",
+            focused = accountFocused,
+        )
+    }
+}
+
+@Composable
+private fun ActionDivider() {
+    Box(
+        Modifier
+            .width(1.dp)
+            .height(16.dp)
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        Color.Transparent,
+                        Color.White.copy(alpha = 0.13f),
+                        Color.Transparent,
+                    ),
+                ),
+            ),
+    )
+}
+
+@Composable
+private fun HeaderIconItem(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
+    focused: Boolean,
+) {
+    Box(
+        modifier = Modifier
+            .size(32.dp)
+            .clip(RoundedCornerShape(50))
+            .then(
+                if (focused) {
+                    Modifier
+                        .background(
+                            Brush.linearGradient(
+                                listOf(Color(0xFFC51B4C), Color(0xFF72102F)),
+                            ),
+                        )
+                        .border(
+                            width = 1.5.dp,
+                            color = Color.White.copy(alpha = 0.9f),
+                            shape = RoundedCornerShape(50),
+                        )
+                } else {
+                    Modifier
+                },
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            modifier = Modifier.size(19.dp),
+            tint = if (focused) Color.White else TextPrimary.copy(alpha = 0.9f),
+        )
     }
 }
 

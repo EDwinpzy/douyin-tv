@@ -8,10 +8,15 @@ import com.dongpiandi.douyintv.DouyinTvApplication
 import com.dongpiandi.douyintv.model.DanmakuMessage
 import com.dongpiandi.douyintv.model.LivePlayback
 import com.dongpiandi.douyintv.model.LiveRoom
+import com.dongpiandi.douyintv.model.PlaybackHistoryEntry
+import com.dongpiandi.douyintv.model.PlaybackProgress
 import com.dongpiandi.douyintv.model.ShortComment
 import com.dongpiandi.douyintv.model.ShortVideo
+import com.dongpiandi.douyintv.model.UserProfile
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -26,10 +31,23 @@ enum class MainTab {
     LIVE,
 }
 
+enum class ShortsSource {
+    RECOMMEND,
+    FAVORITES,
+    AUTHOR,
+}
+
+enum class MyHomeTab {
+    HISTORY,
+    FAVORITES,
+    PROFILE,
+}
+
 data class ShortsUiState(
     val videos: List<ShortVideo> = emptyList(),
     val index: Int = 0,
     val page: Int = 0,
+    val source: ShortsSource = ShortsSource.RECOMMEND,
     val loading: Boolean = false,
     val paused: Boolean = false,
     val error: String? = null,
@@ -65,17 +83,72 @@ data class EngagementUiState(
     val cursor: Long = 0,
     val hasMore: Boolean = false,
     val total: Long = 0,
+)
+
+data class FavoritesUiState(
+    val visible: Boolean = false,
+    val videos: List<ShortVideo> = emptyList(),
+    val ids: Set<String> = emptySet(),
+    val loading: Boolean = false,
+    val loaded: Boolean = false,
+    val loadingMore: Boolean = false,
+    val error: String? = null,
+    val cursor: Long = 0,
+    val hasMore: Boolean = false,
+    val pendingIds: Set<String> = emptySet(),
+    val progress: Map<String, PlaybackProgress> = emptyMap(),
     val resumeOnClose: Boolean = false,
 )
+
+data class AuthorVideosUiState(
+    val visible: Boolean = false,
+    val authorSecUid: String = "",
+    val authorName: String = "",
+    val authorAvatarUrl: String? = null,
+    val profile: UserProfile? = null,
+    val profileLoading: Boolean = false,
+    val profileError: String? = null,
+    val videos: List<ShortVideo> = emptyList(),
+    val loading: Boolean = false,
+    val loaded: Boolean = false,
+    val loadingMore: Boolean = false,
+    val error: String? = null,
+    val cursor: Long = 0,
+    val hasMore: Boolean = false,
+    val progress: Map<String, PlaybackProgress> = emptyMap(),
+    val resumeOnClose: Boolean = false,
+)
+
+data class MyProfileUiState(
+    val profile: UserProfile? = null,
+    val loading: Boolean = false,
+    val error: String? = null,
+)
+
+private sealed interface PlaybackProgressCommand {
+    data class Remember(val video: ShortVideo) : PlaybackProgressCommand
+
+    data class Save(
+        val videoId: String,
+        val positionMs: Long,
+        val durationMs: Long,
+    ) : PlaybackProgressCommand
+}
 
 data class AppUiState(
     val tab: MainTab = MainTab.SHORTS,
     val overlayVisible: Boolean = true,
     val accountMenuVisible: Boolean = false,
+    val myHomeTab: MyHomeTab = MyHomeTab.PROFILE,
+    val myHomeResumeOnClose: Boolean = false,
     val loginVisible: Boolean = false,
     val isLoggedIn: Boolean = false,
     val shorts: ShortsUiState = ShortsUiState(),
     val engagement: EngagementUiState = EngagementUiState(),
+    val favorites: FavoritesUiState = FavoritesUiState(),
+    val history: List<PlaybackHistoryEntry> = emptyList(),
+    val myProfile: MyProfileUiState = MyProfileUiState(),
+    val authorVideos: AuthorVideosUiState = AuthorVideosUiState(),
     val live: LiveListUiState = LiveListUiState(),
     val livePlayer: LivePlayerUiState? = null,
 )
@@ -83,17 +156,40 @@ data class AppUiState(
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val container = (application as DouyinTvApplication).container
     private val sessionStore = container.sessionStore
+    private val progressStore = container.progressStore
     private val api = container.api
     private val shortsLoadMutex = Mutex()
     private var engagementJob: Job? = null
+    private val progressCommands = Channel<PlaybackProgressCommand>(capacity = 32)
 
     private val _state = MutableStateFlow(
-        AppUiState(isLoggedIn = sessionStore.hasSession()),
+        AppUiState(
+            isLoggedIn = sessionStore.hasSession(),
+            history = progressStore.history(),
+        ),
     )
     val state: StateFlow<AppUiState> = _state.asStateFlow()
 
     init {
+        viewModelScope.launch(Dispatchers.IO) {
+            while (true) {
+                when (val command = progressCommands.receive()) {
+                    is PlaybackProgressCommand.Remember ->
+                        progressStore.remember(command.video)
+
+                    is PlaybackProgressCommand.Save ->
+                        progressStore.save(
+                            videoId = command.videoId,
+                            positionMs = command.positionMs,
+                            durationMs = command.durationMs,
+                        )
+                }
+            }
+        }
         loadShorts(reset = true)
+        if (sessionStore.hasSession()) {
+            loadFavorites(reset = true)
+        }
     }
 
     fun showOverlay() {
@@ -101,7 +197,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun hideOverlay() {
-        _state.update { it.copy(overlayVisible = false, accountMenuVisible = false) }
+        _state.update {
+            it.copy(
+                overlayVisible = false,
+                accountMenuVisible = false,
+                myHomeResumeOnClose = false,
+            )
+        }
     }
 
     fun prepareEngagement(video: ShortVideo, force: Boolean = false) {
@@ -113,6 +215,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         ) {
             return
         }
+        progressCommands.trySend(PlaybackProgressCommand.Remember(video))
         engagementJob?.cancel()
         val sameVideo = previous.videoId == video.id
         _state.update {
@@ -121,7 +224,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     videoId = video.id,
                     visible = sameVideo && previous.visible,
                     loading = true,
-                    resumeOnClose = if (sameVideo) previous.resumeOnClose else false,
                 ),
             )
         }
@@ -137,7 +239,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val commentsPage = results.first.getOrNull()
             val comments = commentsPage?.comments.orEmpty()
             val officialDanmaku = results.second.getOrDefault(emptyList())
-            val visibleDanmaku = officialDanmaku.ifEmpty { commentDanmaku(comments) }
+            val visibleDanmaku = buildDanmakuTimeline(
+                official = officialDanmaku,
+                durationMs = video.durationMs,
+            )
             _state.update { current ->
                 if (current.engagement.videoId != video.id) {
                     current
@@ -162,17 +267,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openComments(video: ShortVideo) {
         val current = _state.value
-        val resumeOnClose = if (current.engagement.visible) {
-            current.engagement.resumeOnClose
-        } else {
-            !current.shorts.paused
-        }
         _state.update {
             it.copy(
-                shorts = it.shorts.copy(paused = true),
                 engagement = it.engagement.copy(
                     visible = true,
-                    resumeOnClose = resumeOnClose,
                 ),
             )
         }
@@ -183,14 +281,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun closeComments() {
         _state.update { current ->
-            val shouldResume = current.engagement.resumeOnClose
             current.copy(
-                shorts = current.shorts.copy(
-                    paused = if (shouldResume) false else current.shorts.paused,
-                ),
                 engagement = current.engagement.copy(
                     visible = false,
-                    resumeOnClose = false,
                 ),
             )
         }
@@ -249,6 +342,226 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         prepareEngagement(video, force = true)
     }
 
+    fun toggleFavorite(video: ShortVideo) {
+        val current = _state.value
+        if (!current.isLoggedIn) {
+            openLogin()
+            return
+        }
+        if (video.id in current.favorites.pendingIds) return
+        val shouldFavorite = video.id !in current.favorites.ids
+        _state.update {
+            it.copy(
+                favorites = it.favorites.copy(
+                    pendingIds = it.favorites.pendingIds + video.id,
+                    error = null,
+                ),
+            )
+        }
+        viewModelScope.launch {
+            runCatching { api.setFavorite(video.id, shouldFavorite) }
+                .onSuccess {
+                    _state.update { state ->
+                        val ids = if (shouldFavorite) {
+                            state.favorites.ids + video.id
+                        } else {
+                            state.favorites.ids - video.id
+                        }
+                        val videos = if (shouldFavorite) {
+                            listOf(video) + state.favorites.videos.filterNot { it.id == video.id }
+                        } else {
+                            state.favorites.videos.filterNot { it.id == video.id }
+                        }
+                        state.copy(
+                            favorites = state.favorites.copy(
+                                ids = ids,
+                                videos = videos,
+                                pendingIds = state.favorites.pendingIds - video.id,
+                                progress = progressStore.load(videos.map(ShortVideo::id)),
+                            ),
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    _state.update {
+                        it.copy(
+                            favorites = it.favorites.copy(
+                                pendingIds = it.favorites.pendingIds - video.id,
+                                error = error.toDisplayMessage("收藏操作失败"),
+                            ),
+                        )
+                    }
+                }
+        }
+    }
+
+    fun openFavorites() {
+        showAccountMenu(MyHomeTab.FAVORITES)
+    }
+
+    fun closeFavorites() {
+        closeAccountMenu()
+    }
+
+    fun retryFavorites() {
+        loadFavorites(reset = true)
+    }
+
+    fun loadMoreFavorites() {
+        loadFavorites(reset = false)
+    }
+
+    fun playFavorite(video: ShortVideo) {
+        playCollectionVideo(
+            video = video,
+            sourceVideos = _state.value.favorites.videos,
+            source = ShortsSource.FAVORITES,
+        )
+    }
+
+    fun playHistoryVideo(video: ShortVideo) {
+        playCollectionVideo(
+            video = video,
+            sourceVideos = _state.value.history.map(PlaybackHistoryEntry::video),
+            source = ShortsSource.FAVORITES,
+        )
+    }
+
+    fun openAuthorVideos(video: ShortVideo) {
+        if (video.authorSecUid.isBlank()) return
+        val current = _state.value
+        val sameAuthor = current.authorVideos.authorSecUid == video.authorSecUid
+        val resumeOnClose = if (sameAuthor && current.authorVideos.visible) {
+            current.authorVideos.resumeOnClose
+        } else {
+            !current.shorts.paused
+        }
+        _state.update {
+            if (sameAuthor) {
+                it.copy(
+                    shorts = it.shorts.copy(paused = true),
+                    accountMenuVisible = false,
+                    myHomeResumeOnClose = false,
+                    authorVideos = it.authorVideos.copy(
+                        visible = true,
+                        authorName = video.authorName,
+                        authorAvatarUrl = video.authorAvatarUrl,
+                        resumeOnClose = resumeOnClose,
+                        progress = progressStore.load(
+                            it.authorVideos.videos.map(ShortVideo::id),
+                        ),
+                    ),
+                )
+            } else {
+                it.copy(
+                    shorts = it.shorts.copy(paused = true),
+                    accountMenuVisible = false,
+                    myHomeResumeOnClose = false,
+                    authorVideos = AuthorVideosUiState(
+                        visible = true,
+                        authorSecUid = video.authorSecUid,
+                        authorName = video.authorName,
+                        authorAvatarUrl = video.authorAvatarUrl,
+                        profileLoading = true,
+                        resumeOnClose = resumeOnClose,
+                    ),
+                )
+            }
+        }
+        if (!sameAuthor || !_state.value.authorVideos.loaded) {
+            loadAuthorVideos(reset = true)
+        }
+        if (!sameAuthor || _state.value.authorVideos.profile == null) {
+            loadAuthorProfile(video.authorSecUid)
+        }
+    }
+
+    fun closeAuthorVideos() {
+        _state.update { current ->
+            val shouldResume = current.authorVideos.resumeOnClose
+            current.copy(
+                shorts = current.shorts.copy(
+                    paused = if (shouldResume) false else current.shorts.paused,
+                ),
+                authorVideos = current.authorVideos.copy(
+                    visible = false,
+                    resumeOnClose = false,
+                ),
+            )
+        }
+    }
+
+    fun retryAuthorVideos() {
+        loadAuthorVideos(reset = true)
+    }
+
+    fun loadMoreAuthorVideos() {
+        loadAuthorVideos(reset = false)
+    }
+
+    fun playAuthorVideo(video: ShortVideo) {
+        playCollectionVideo(
+            video = video,
+            sourceVideos = _state.value.authorVideos.videos,
+            source = ShortsSource.AUTHOR,
+        )
+    }
+
+    fun retryAuthorProfile() {
+        val authorSecUid = _state.value.authorVideos.authorSecUid
+        if (authorSecUid.isNotBlank()) loadAuthorProfile(authorSecUid)
+    }
+
+    fun recordPlaybackProgress(
+        videoId: String,
+        positionMs: Long,
+        durationMs: Long,
+    ) {
+        if (videoId.isBlank() || durationMs <= 0L) return
+        val resolvedPosition = positionMs.coerceIn(0L, durationMs)
+        progressCommands.trySend(
+            PlaybackProgressCommand.Save(
+                videoId = videoId,
+                positionMs = resolvedPosition,
+                durationMs = durationMs,
+            ),
+        )
+        if (
+            !_state.value.accountMenuVisible &&
+            !_state.value.authorVideos.visible
+        ) {
+            return
+        }
+        val progress = PlaybackProgress(
+            positionMs = resolvedPosition,
+            durationMs = durationMs,
+            updatedAtMs = System.currentTimeMillis(),
+        )
+        _state.update {
+            it.copy(
+                favorites = if (it.favorites.videos.any { video -> video.id == videoId }) {
+                    it.favorites.copy(progress = it.favorites.progress + (videoId to progress))
+                } else {
+                    it.favorites
+                },
+                history = it.history.map { entry ->
+                    if (entry.video.id == videoId) {
+                        entry.copy(progress = progress)
+                    } else {
+                        entry
+                    }
+                },
+                authorVideos = if (it.authorVideos.videos.any { video -> video.id == videoId }) {
+                    it.authorVideos.copy(
+                        progress = it.authorVideos.progress + (videoId to progress),
+                    )
+                } else {
+                    it.authorVideos
+                },
+            )
+        }
+    }
+
     fun selectTab(tab: MainTab) {
         _state.update { it.copy(tab = tab, overlayVisible = true) }
         if (tab == MainTab.LIVE && !_state.value.live.loaded) {
@@ -281,7 +594,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             prefetchShortsIfNeeded()
         } else {
-            loadShorts(reset = false, advanceAfterLoad = true)
+            if (current.source == ShortsSource.RECOMMEND) {
+                loadShorts(reset = false, advanceAfterLoad = true)
+            }
         }
     }
 
@@ -431,14 +746,82 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         loadShorts(reset = true)
+        loadFavorites(reset = true)
     }
 
-    fun showAccountMenu() {
-        _state.update { it.copy(accountMenuVisible = true) }
+    fun showAccountMenu(tab: MyHomeTab = MyHomeTab.PROFILE) {
+        val current = _state.value
+        if (!current.isLoggedIn) {
+            openLogin()
+            return
+        }
+        val resumeOnClose = if (current.accountMenuVisible) {
+            current.myHomeResumeOnClose
+        } else {
+            !current.shorts.paused
+        }
+        _state.update {
+            it.copy(
+                overlayVisible = true,
+                accountMenuVisible = true,
+                myHomeTab = tab,
+                myHomeResumeOnClose = resumeOnClose,
+                shorts = it.shorts.copy(paused = true),
+                history = progressStore.history(),
+                favorites = it.favorites.copy(
+                    progress = progressStore.load(it.favorites.videos.map(ShortVideo::id)),
+                ),
+                authorVideos = it.authorVideos.copy(visible = false, resumeOnClose = false),
+            )
+        }
+        if (tab == MyHomeTab.FAVORITES && !_state.value.favorites.loaded) {
+            loadFavorites(reset = true)
+        }
+        if (tab == MyHomeTab.PROFILE) {
+            loadSelfProfile()
+        }
     }
 
     fun closeAccountMenu() {
-        _state.update { it.copy(accountMenuVisible = false) }
+        _state.update {
+            val shouldResume = it.myHomeResumeOnClose
+            it.copy(
+                accountMenuVisible = false,
+                myHomeResumeOnClose = false,
+                shorts = it.shorts.copy(
+                    paused = if (shouldResume) false else it.shorts.paused,
+                ),
+            )
+        }
+    }
+
+    fun selectMyHomeTab(tab: MyHomeTab) {
+        if (!_state.value.accountMenuVisible) {
+            showAccountMenu(tab)
+            return
+        }
+        _state.update {
+            it.copy(
+                myHomeTab = tab,
+                history = if (tab == MyHomeTab.HISTORY) {
+                    progressStore.history()
+                } else {
+                    it.history
+                },
+            )
+        }
+        when (tab) {
+            MyHomeTab.FAVORITES -> {
+                if (!_state.value.favorites.loaded) loadFavorites(reset = true)
+            }
+
+            MyHomeTab.PROFILE -> loadSelfProfile()
+            MyHomeTab.HISTORY -> Unit
+        }
+    }
+
+    fun retryMyProfile() {
+        loadSelfProfile(force = true)
     }
 
     fun logout() {
@@ -450,7 +833,238 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 isLoggedIn = false,
                 accountMenuVisible = false,
+                myHomeResumeOnClose = false,
                 loginVisible = false,
+                favorites = FavoritesUiState(),
+                myProfile = MyProfileUiState(),
+                authorVideos = AuthorVideosUiState(),
+            )
+        }
+    }
+
+    private fun loadFavorites(reset: Boolean) {
+        val snapshot = _state.value.favorites
+        if (snapshot.loading || snapshot.loadingMore) return
+        if (!reset && !snapshot.hasMore) return
+        val cursor = if (reset) 0L else snapshot.cursor
+        _state.update {
+            it.copy(
+                favorites = it.favorites.copy(
+                    loading = reset,
+                    loadingMore = !reset,
+                    error = null,
+                    videos = if (reset) emptyList() else it.favorites.videos,
+                ),
+            )
+        }
+        viewModelScope.launch {
+            runCatching { api.loadFavoriteVideos(cursor = cursor) }
+                .onSuccess { page ->
+                    _state.update { state ->
+                        val existing = if (reset) emptyList() else state.favorites.videos
+                        val merged = (existing + page.videos)
+                            .distinctBy(ShortVideo::id)
+                        state.copy(
+                            favorites = state.favorites.copy(
+                                videos = merged,
+                                ids = state.favorites.ids + page.videos.map(ShortVideo::id),
+                                loading = false,
+                                loaded = true,
+                                loadingMore = false,
+                                error = null,
+                                cursor = page.cursor,
+                                hasMore = page.hasMore,
+                                progress = progressStore.load(merged.map(ShortVideo::id)),
+                            ),
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    _state.update {
+                        it.copy(
+                            favorites = it.favorites.copy(
+                                loading = false,
+                                loadingMore = false,
+                                error = error.toDisplayMessage("收藏列表加载失败"),
+                            ),
+                        )
+                    }
+                }
+        }
+    }
+
+    private fun loadSelfProfile(force: Boolean = false) {
+        val current = _state.value
+        if (!current.isLoggedIn) return
+        val profile = current.myProfile
+        if (!force && (profile.loading || profile.profile != null)) return
+        _state.update {
+            it.copy(
+                myProfile = it.myProfile.copy(
+                    loading = true,
+                    error = null,
+                ),
+            )
+        }
+        viewModelScope.launch {
+            runCatching { api.loadSelfProfile() }
+                .onSuccess { result ->
+                    _state.update {
+                        it.copy(
+                            myProfile = MyProfileUiState(profile = result),
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    _state.update {
+                        it.copy(
+                            myProfile = it.myProfile.copy(
+                                loading = false,
+                                error = error.toDisplayMessage("账号资料加载失败"),
+                            ),
+                        )
+                    }
+                }
+        }
+    }
+
+    private fun loadAuthorProfile(authorSecUid: String) {
+        if (authorSecUid.isBlank()) return
+        _state.update {
+            if (it.authorVideos.authorSecUid != authorSecUid) {
+                it
+            } else {
+                it.copy(
+                    authorVideos = it.authorVideos.copy(
+                        profileLoading = true,
+                        profileError = null,
+                    ),
+                )
+            }
+        }
+        viewModelScope.launch {
+            runCatching { api.loadAuthorProfile(authorSecUid) }
+                .onSuccess { profile ->
+                    _state.update {
+                        if (it.authorVideos.authorSecUid != authorSecUid) {
+                            it
+                        } else {
+                            it.copy(
+                                authorVideos = it.authorVideos.copy(
+                                    profile = profile,
+                                    profileLoading = false,
+                                    profileError = null,
+                                    authorName = profile.nickname,
+                                    authorAvatarUrl = profile.avatarUrl
+                                        ?: it.authorVideos.authorAvatarUrl,
+                                ),
+                            )
+                        }
+                    }
+                }
+                .onFailure { error ->
+                    _state.update {
+                        if (it.authorVideos.authorSecUid != authorSecUid) {
+                            it
+                        } else {
+                            it.copy(
+                                authorVideos = it.authorVideos.copy(
+                                    profileLoading = false,
+                                    profileError = error.toDisplayMessage("博主资料加载失败"),
+                                ),
+                            )
+                        }
+                    }
+                }
+        }
+    }
+
+    private fun loadAuthorVideos(reset: Boolean) {
+        val snapshot = _state.value.authorVideos
+        val authorSecUid = snapshot.authorSecUid
+        if (authorSecUid.isBlank()) return
+        if (snapshot.loading || snapshot.loadingMore) return
+        if (!reset && !snapshot.hasMore) return
+        val cursor = if (reset) 0L else snapshot.cursor
+        _state.update {
+            it.copy(
+                authorVideos = it.authorVideos.copy(
+                    loading = reset,
+                    loadingMore = !reset,
+                    error = null,
+                    videos = if (reset) emptyList() else it.authorVideos.videos,
+                ),
+            )
+        }
+        viewModelScope.launch {
+            runCatching {
+                api.loadAuthorVideos(authorSecUid = authorSecUid, cursor = cursor)
+            }
+                .onSuccess { page ->
+                    _state.update { state ->
+                        if (state.authorVideos.authorSecUid != authorSecUid) {
+                            state
+                        } else {
+                            val existing = if (reset) emptyList() else state.authorVideos.videos
+                            val merged = (existing + page.videos)
+                                .distinctBy(ShortVideo::id)
+                            state.copy(
+                                authorVideos = state.authorVideos.copy(
+                                    videos = merged,
+                                    loading = false,
+                                    loaded = true,
+                                    loadingMore = false,
+                                    error = null,
+                                    cursor = page.cursor,
+                                    hasMore = page.hasMore,
+                                    progress = progressStore.load(merged.map(ShortVideo::id)),
+                                ),
+                            )
+                        }
+                    }
+                }
+                .onFailure { error ->
+                    _state.update { state ->
+                        if (state.authorVideos.authorSecUid != authorSecUid) {
+                            state
+                        } else {
+                            state.copy(
+                                authorVideos = state.authorVideos.copy(
+                                    loading = false,
+                                    loadingMore = false,
+                                    error = error.toDisplayMessage("博主视频加载失败"),
+                                ),
+                            )
+                        }
+                    }
+                }
+        }
+    }
+
+    private fun playCollectionVideo(
+        video: ShortVideo,
+        sourceVideos: List<ShortVideo>,
+        source: ShortsSource,
+    ) {
+        val ordered = sourceVideos.ifEmpty { listOf(video) }
+        val index = ordered.indexOfFirst { it.id == video.id }.takeIf { it >= 0 } ?: 0
+        _state.update {
+            it.copy(
+                tab = MainTab.SHORTS,
+                overlayVisible = false,
+                engagement = EngagementUiState(),
+                accountMenuVisible = false,
+                myHomeResumeOnClose = false,
+                authorVideos = it.authorVideos.copy(visible = false, resumeOnClose = false),
+                shorts = it.shorts.copy(
+                    videos = ordered,
+                    index = index,
+                    page = 0,
+                    source = source,
+                    loading = false,
+                    paused = false,
+                    error = null,
+                ),
             )
         }
     }
@@ -494,7 +1108,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun prefetchShortsIfNeeded() {
         val shorts = _state.value.shorts
-        if (shorts.videos.isNotEmpty() && shorts.index >= shorts.videos.lastIndex - 4) {
+        if (
+            shorts.source == ShortsSource.RECOMMEND &&
+            shorts.videos.isNotEmpty() &&
+            shorts.index >= shorts.videos.lastIndex - 4
+        ) {
             loadShorts(reset = false)
         }
     }
@@ -513,6 +1131,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             videos = if (reset) emptyList() else it.shorts.videos,
                             index = if (reset) 0 else it.shorts.index,
                             page = if (reset) 0 else it.shorts.page,
+                            source = ShortsSource.RECOMMEND,
                         ),
                     )
                 }
@@ -557,18 +1176,4 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun Throwable.toDisplayMessage(fallback: String): String =
         message?.takeIf { it.isNotBlank() } ?: fallback
 
-    private fun commentDanmaku(comments: List<ShortComment>): List<DanmakuMessage> =
-        comments.asSequence()
-            .map { comment -> comment.text.replace('\n', ' ').trim() }
-            .filter(String::isNotBlank)
-            .distinct()
-            .take(12)
-            .mapIndexed { index, text ->
-                DanmakuMessage(
-                    id = "comment-danmaku-$index",
-                    text = text,
-                    offsetMs = 600L + index * 1_200L,
-                )
-            }
-            .toList()
 }

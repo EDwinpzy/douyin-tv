@@ -32,4 +32,24 @@ class ShortsPreloadPolicyTest {
         assertNull(ShortsPreloadPolicy.targetDurationMs(0))
         assertNull(ShortsPreloadPolicy.targetDurationMs(5))
     }
+
+    @Test
+    fun lowTierWindowStopsAfterTwoFollowingVideos() {
+        assertEquals(
+            1..2,
+            ShortsPreloadPolicy.forwardIndices(
+                currentIndex = 0,
+                size = 10,
+                forwardCount = 2,
+            ),
+        )
+        assertEquals(
+            2..5,
+            ShortsPreloadPolicy.retainedIndices(
+                currentIndex = 3,
+                size = 10,
+                forwardCount = 2,
+            ),
+        )
+    }
 }

@@ -3,7 +3,7 @@
 package com.dongpiandi.douyintv.ui.screens
 
 import android.content.Context
-import android.os.Looper
+import android.os.HandlerThread
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.DefaultLoadControl
@@ -18,7 +18,10 @@ import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
 import com.dongpiandi.douyintv.model.ShortVideo
 import com.dongpiandi.douyintv.network.DouyinMediaSourceFactory
 
-internal class ShortsPlaybackEngine(context: Context) {
+internal class ShortsPlaybackEngine(
+    context: Context,
+    private val preloadForwardCount: Int = ShortsPreloadPolicy.FORWARD_COUNT,
+) {
     private val appContext = context.applicationContext
     private val renderersFactory = DefaultRenderersFactory(appContext)
         .setEnableDecoderFallback(true)
@@ -34,12 +37,13 @@ internal class ShortsPlaybackEngine(context: Context) {
     )
     private val managedItems = linkedMapOf<String, ManagedItem>()
     private var currentIndex = C.INDEX_UNSET
+    private val playbackThread = HandlerThread("ShortsPlayback").apply { start() }
 
     val player: ExoPlayer
     private val preloadManager: DefaultPreloadManager
 
     init {
-        val playbackLooper = Looper.getMainLooper()
+        val playbackLooper = playbackThread.looper
         player = ExoPlayer.Builder(appContext)
             .setRenderersFactory(renderersFactory)
             .setMediaSourceFactory(mediaSourceFactory)
@@ -77,7 +81,11 @@ internal class ShortsPlaybackEngine(context: Context) {
         currentIndex = index
         preloadManager.setCurrentPlayingIndex(index)
 
-        val retainedIndices = ShortsPreloadPolicy.retainedIndices(index, videos.size)
+        val retainedIndices = ShortsPreloadPolicy.retainedIndices(
+            currentIndex = index,
+            size = videos.size,
+            forwardCount = preloadForwardCount,
+        )
         val iterator = managedItems.iterator()
         while (iterator.hasNext()) {
             val item = iterator.next().value
@@ -87,7 +95,11 @@ internal class ShortsPlaybackEngine(context: Context) {
             }
         }
 
-        for (nextIndex in ShortsPreloadPolicy.forwardIndices(index, videos.size)) {
+        for (nextIndex in ShortsPreloadPolicy.forwardIndices(
+            currentIndex = index,
+            size = videos.size,
+            forwardCount = preloadForwardCount,
+        )) {
             val video = videos[nextIndex]
             val url = video.playUrls.firstOrNull()?.takeIf(String::isNotBlank) ?: continue
             val mediaItem = mediaItem(video, url, urlIndex = 0)
@@ -114,8 +126,10 @@ internal class ShortsPlaybackEngine(context: Context) {
     }
 
     fun release() {
-        player.release()
+        clearPreloadWindow()
         preloadManager.release()
+        player.release()
+        playbackThread.quitSafely()
     }
 
     private fun clearPreloadWindow() {

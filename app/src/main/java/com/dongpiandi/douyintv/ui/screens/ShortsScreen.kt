@@ -1,10 +1,12 @@
 @file:androidx.media3.common.util.UnstableApi
+@file:OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 
 package com.dongpiandi.douyintv.ui.screens
 
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
+import android.view.View
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -19,14 +21,22 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -35,9 +45,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
@@ -50,6 +60,9 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -62,37 +75,40 @@ import androidx.media3.common.Player
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
-import coil.imageLoader
-import coil.request.ImageRequest
 import com.dongpiandi.douyintv.model.ShortVideo
+import com.dongpiandi.douyintv.performance.DevicePerformanceProfile
 import com.dongpiandi.douyintv.ui.MainTab
 import com.dongpiandi.douyintv.ui.EngagementUiState
 import com.dongpiandi.douyintv.ui.ShortsUiState
 import com.dongpiandi.douyintv.ui.components.CommentsPanel
 import com.dongpiandi.douyintv.ui.components.commentsPanelWidth
 import com.dongpiandi.douyintv.ui.components.DanmakuOverlay
+import com.dongpiandi.douyintv.ui.components.GlassStyle
+import com.dongpiandi.douyintv.ui.components.PlaybackProgressIndicator
 import com.dongpiandi.douyintv.ui.components.TopChrome
+import com.dongpiandi.douyintv.ui.components.glassSurface
 import com.dongpiandi.douyintv.ui.formatCount
 import com.dongpiandi.douyintv.ui.theme.FocusRing
 import com.dongpiandi.douyintv.ui.theme.Panel
 import com.dongpiandi.douyintv.ui.theme.TextPrimary
 import com.dongpiandi.douyintv.ui.theme.TextSecondary
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 
 private const val OVERLAY_AUTO_HIDE_DELAY_MS = 4_000L
-private const val DANMAKU_HEIGHT_FRACTION = 0.25f
-
-private fun coverCacheKey(videoId: String, coverUrl: String): String =
-    "short-cover:$videoId:${coverUrl.hashCode()}"
+private const val DANMAKU_HEIGHT_FRACTION = 0.15f
 
 @Composable
 fun ShortsScreen(
     state: ShortsUiState,
     engagement: EngagementUiState,
     overlayVisible: Boolean,
+    sidePanelVisible: Boolean,
     isLoggedIn: Boolean,
     onSelectTab: (MainTab) -> Unit,
     onAccountClick: () -> Unit,
+    onHistoryClick: () -> Unit,
     onShowOverlay: () -> Unit,
     onHideOverlay: () -> Unit,
     onPrevious: () -> Unit,
@@ -106,28 +122,42 @@ fun ShortsScreen(
     onCloseComments: () -> Unit,
     onLoadMoreComments: (ShortVideo) -> Unit,
     onRetryComments: (ShortVideo) -> Unit,
+    favoriteIds: Set<String>,
+    favoritePendingIds: Set<String>,
+    onToggleFavorite: (ShortVideo) -> Unit,
+    onOpenAuthor: (ShortVideo) -> Unit,
+    onPlaybackProgress: (videoId: String, positionMs: Long, durationMs: Long) -> Unit,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val lifecycleState by lifecycleOwner.lifecycle.currentStateFlow.collectAsState()
     val focusManager = LocalFocusManager.current
     val videoFocusRequester = remember { FocusRequester() }
     val chromeFocusRequester = remember { FocusRequester() }
+    val bottomActionsFocusRequester = remember { FocusRequester() }
     val retryFocusRequester = remember { FocusRequester() }
     var focusChromeRequested by remember { mutableStateOf(false) }
-    var autoHideEpoch by remember { mutableIntStateOf(0) }
+    val overlayInteractionSignals = remember { Channel<Unit>(Channel.CONFLATED) }
     var videoFocused by remember { mutableStateOf(false) }
-    val playbackEngine = remember { ShortsPlaybackEngine(context) }
+    val performanceProfile = remember(context) {
+        DevicePerformanceProfile.detect(context)
+    }
+    val playbackEngine = remember(context, performanceProfile) {
+        ShortsPlaybackEngine(
+            context = context,
+            preloadForwardCount = performanceProfile.preloadForwardCount,
+        )
+    }
     val player = playbackEngine.player
     val current = state.current
     var urlIndex by remember(current?.id) { mutableIntStateOf(0) }
     var readyVideoId by remember { mutableStateOf<String?>(null) }
-    var renderedVideoId by remember { mutableStateOf<String?>(null) }
     val latestVideo by rememberUpdatedState(current)
     val latestUrlIndex by rememberUpdatedState(urlIndex)
     val latestPaused by rememberUpdatedState(state.paused)
-    val imageLoader = context.imageLoader
     val latestOnEnded by rememberUpdatedState(onEnded)
     val latestOnError by rememberUpdatedState(onPlaybackError)
+    val latestOnProgress by rememberUpdatedState(onPlaybackProgress)
     val activeUrl = current?.playUrls?.getOrNull(urlIndex)
     val commentsVisible = engagement.visible
 
@@ -138,12 +168,12 @@ fun ShortsScreen(
                     readyVideoId = latestVideo?.id
                 }
                 if (playbackState == Player.STATE_ENDED) {
+                    val video = latestVideo
+                    if (video != null && player.duration > 0L) {
+                        latestOnProgress(video.id, player.duration, player.duration)
+                    }
                     latestOnEnded()
                 }
-            }
-
-            override fun onRenderedFirstFrame() {
-                renderedVideoId = latestVideo?.id
             }
 
             override fun onPlayerError(error: PlaybackException) {
@@ -183,9 +213,9 @@ fun ShortsScreen(
         }
         val video = current ?: return@LaunchedEffect
         readyVideoId = null
-        renderedVideoId = null
         playbackEngine.prepare(video, urlIndex)
         player.prepare()
+        player.seekTo(0L)
         player.playWhenReady = !state.paused
     }
 
@@ -195,43 +225,37 @@ fun ShortsScreen(
         }
     }
 
-    LaunchedEffect(state.videos, state.index) {
-        ShortsPreloadPolicy.retainedIndices(state.index, state.videos.size).forEach {
-            val video = state.videos.getOrNull(it) ?: return@forEach
-            val coverUrl = video.coverUrl ?: return@forEach
-            imageLoader.enqueue(
-                ImageRequest.Builder(context)
-                    .data(coverUrl)
-                    .memoryCacheKey(coverCacheKey(video.id, coverUrl))
-                    .build(),
-            )
-        }
-    }
-
     LaunchedEffect(state.paused) {
         player.playWhenReady = !state.paused
         if (state.paused) player.pause() else player.play()
     }
 
+    PlaybackProgressReporter(
+        player = player,
+        videoId = current?.id,
+        fallbackDurationMs = current?.durationMs ?: 0L,
+        intervalMs = performanceProfile.playbackProgressIntervalMs,
+        onProgress = latestOnProgress,
+    )
+
     LaunchedEffect(current?.id) {
-        if (current != null) {
-            onPrepareEngagement(current)
-            if (!engagement.visible) {
-                videoFocusRequester.requestFocus()
-            }
-        }
+        if (current != null) onPrepareEngagement(current)
     }
 
-    LaunchedEffect(commentsVisible) {
-        if (!commentsVisible) {
-            withFrameNanos { }
-            focusManager.clearFocus(force = true)
-            videoFocusRequester.requestFocus()
-        }
-    }
-
-    LaunchedEffect(overlayVisible, current?.id) {
-        if (!overlayVisible && current != null && !commentsVisible) {
+    LaunchedEffect(
+        current?.id,
+        overlayVisible,
+        commentsVisible,
+        sidePanelVisible,
+        lifecycleState,
+    ) {
+        if (
+            current != null &&
+            !overlayVisible &&
+            !commentsVisible &&
+            !sidePanelVisible &&
+            lifecycleState.isAtLeast(Lifecycle.State.RESUMED)
+        ) {
             withFrameNanos { }
             focusManager.clearFocus(force = true)
             videoFocusRequester.requestFocus()
@@ -242,18 +266,27 @@ fun ShortsScreen(
         overlayVisible,
         current?.id,
         state.paused,
-        autoHideEpoch,
         commentsVisible,
+        sidePanelVisible,
     ) {
         if (
             !overlayVisible ||
             current == null ||
             state.paused ||
-            commentsVisible
+            commentsVisible ||
+            sidePanelVisible
         ) {
             return@LaunchedEffect
         }
-        delay(OVERLAY_AUTO_HIDE_DELAY_MS)
+        while (overlayInteractionSignals.tryReceive().isSuccess) {
+            Unit
+        }
+        while (true) {
+            val interacted = withTimeoutOrNull(OVERLAY_AUTO_HIDE_DELAY_MS) {
+                overlayInteractionSignals.receive()
+            }
+            if (interacted == null) break
+        }
         focusManager.clearFocus(force = true)
         onHideOverlay()
         withFrameNanos { }
@@ -264,11 +297,13 @@ fun ShortsScreen(
         overlayVisible,
         focusChromeRequested,
         commentsVisible,
+        sidePanelVisible,
     ) {
         if (
             overlayVisible &&
             focusChromeRequested &&
-            !commentsVisible
+            !commentsVisible &&
+            !sidePanelVisible
         ) {
             withFrameNanos { }
             delay(16)
@@ -281,34 +316,28 @@ fun ShortsScreen(
         if (state.error != null) retryFocusRequester.requestFocus()
     }
 
-    val posterAlpha by animateFloatAsState(
-        targetValue = if (current != null && renderedVideoId == current.id) 0f else 1f,
-        animationSpec = tween(durationMillis = 180),
-        label = "videoPosterAlpha",
-    )
-    val coverRequest = remember(current?.id, current?.coverUrl) {
-        current?.coverUrl?.let { coverUrl ->
-            ImageRequest.Builder(context)
-                .data(coverUrl)
-                .memoryCacheKey(coverCacheKey(current.id, coverUrl))
-                .build()
-        }
-    }
-
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
             .onPreviewKeyEvent { event ->
+                if (overlayVisible && event.type == KeyEventType.KeyDown) {
+                    overlayInteractionSignals.trySend(Unit)
+                }
                 val seekKey = event.key == Key.DirectionLeft ||
                     event.key == Key.DirectionRight
-                if (!seekKey || commentsVisible || current == null || state.error != null) {
+                if (
+                    !seekKey ||
+                    !videoFocused ||
+                    overlayVisible ||
+                    commentsVisible ||
+                    current == null ||
+                    state.error != null
+                ) {
                     return@onPreviewKeyEvent false
                 }
                 if (event.type == KeyEventType.KeyUp) return@onPreviewKeyEvent true
                 if (event.nativeKeyEvent.repeatCount == 0) {
-                    onShowOverlay()
-                    autoHideEpoch++
                     val delta = if (event.key == Key.DirectionLeft) -5_000L else 5_000L
                     val maxPosition = player.duration.takeIf { it > 0L } ?: Long.MAX_VALUE
                     player.seekTo(
@@ -320,13 +349,38 @@ fun ShortsScreen(
     ) {
         val infoWidth = (maxWidth * 0.28f).coerceAtMost(280.dp)
         val danmakuHeight = (maxHeight * DANMAKU_HEIGHT_FRACTION)
-            .coerceAtLeast(96.dp)
+            .coerceAtLeast(72.dp)
         val commentsWidth = commentsPanelWidth(maxWidth)
-        val videoAreaModifier = if (commentsVisible) {
+        val videoRegionWidth = if (commentsVisible) {
+            (maxWidth - commentsWidth).coerceAtLeast(1.dp)
+        } else {
+            maxWidth
+        }
+        val videoRegionModifier = if (commentsVisible) {
             Modifier
                 .fillMaxHeight()
-                .width((maxWidth - commentsWidth).coerceAtLeast(1.dp))
+                .width(videoRegionWidth)
                 .align(Alignment.CenterStart)
+        } else {
+            Modifier.fillMaxSize()
+        }
+        val aspectRatio = current?.aspectRatio
+        val fittedByWidthHeight = aspectRatio
+            ?.takeIf { it > 0f }
+            ?.let { videoRegionWidth / it }
+        val videoFrameModifier = if (
+            aspectRatio != null &&
+            fittedByWidthHeight != null
+        ) {
+            if (fittedByWidthHeight <= maxHeight) {
+                Modifier
+                    .width(videoRegionWidth)
+                    .height(fittedByWidthHeight)
+            } else {
+                Modifier
+                    .width(maxHeight * aspectRatio)
+                    .height(maxHeight)
+            }
         } else {
             Modifier.fillMaxSize()
         }
@@ -339,6 +393,12 @@ fun ShortsScreen(
                 .onPreviewKeyEvent { event ->
                     if (!videoFocused) return@onPreviewKeyEvent false
                     if (state.error != null) return@onPreviewKeyEvent false
+                    if (overlayVisible) {
+                        if (event.type == KeyEventType.KeyDown) {
+                            focusChromeRequested = true
+                        }
+                        return@onPreviewKeyEvent true
+                    }
                     val handled = event.key == Key.DirectionUp ||
                         event.key == Key.DirectionDown ||
                         event.key == Key.DirectionCenter ||
@@ -358,7 +418,6 @@ fun ShortsScreen(
                                 onPrevious()
                             } else {
                                 onShowOverlay()
-                                autoHideEpoch++
                                 focusChromeRequested = true
                             }
                         }
@@ -368,78 +427,64 @@ fun ShortsScreen(
                             onNext()
                         }
                         Key.DirectionCenter, Key.Enter, Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause -> {
-                            onShowOverlay()
-                            autoHideEpoch++
                             onTogglePause()
                         }
 
                         Key.Menu -> {
                             onShowOverlay()
-                            autoHideEpoch++
                             focusChromeRequested = true
                         }
                         else -> Unit
                     }
                     true
                 }
-                .focusable(enabled = !commentsVisible),
+                .focusable(enabled = !commentsVisible && !sidePanelVisible),
         )
-        coverRequest?.let { cover ->
-            AsyncImage(
-                model = cover,
-                contentDescription = null,
-                modifier = videoAreaModifier,
-                contentScale = ContentScale.Crop,
-                alpha = 0.24f,
-            )
-        }
         Box(
-            Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.radialGradient(
-                        listOf(Color.Transparent, Color.Black.copy(alpha = 0.72f)),
-                    ),
-                ),
-        )
-
-        if (current != null) {
-            AndroidView(
-                factory = { viewContext ->
-                    PlayerView(viewContext).apply {
-                        useController = false
-                        setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
-                        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                        setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                        isFocusable = false
-                        isClickable = false
-                    }
-                },
-                update = { view -> view.player = player },
-                modifier = videoAreaModifier,
-            )
-            coverRequest?.let { cover ->
-                AsyncImage(
-                    model = cover,
-                    contentDescription = null,
-                    modifier = videoAreaModifier.alpha(posterAlpha),
-                    contentScale = ContentScale.Fit,
-                )
+            modifier = videoRegionModifier,
+        ) {
+            if (current != null) {
+                Box(
+                    modifier = videoFrameModifier.align(Alignment.Center),
+                ) {
+                    AndroidView(
+                        factory = { viewContext ->
+                            PlayerView(viewContext).apply {
+                                useController = false
+                                setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
+                                setKeepContentOnPlayerReset(true)
+                                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                                setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                                isFocusable = false
+                                isClickable = false
+                                importantForAccessibility =
+                                    View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+                            }
+                        },
+                        update = { view -> view.player = player },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
             }
         }
 
-        if (current != null && !commentsVisible) {
+        if (
+            current != null &&
+            !commentsVisible &&
+            !sidePanelVisible
+        ) {
             DanmakuOverlay(
                 messages = engagement.danmaku,
                 player = player,
+                refreshIntervalMs = performanceProfile.danmakuFrameIntervalMs,
+                animating = !overlayVisible,
                 modifier = Modifier
                     .align(Alignment.TopCenter)
-                    .padding(top = 82.dp)
                     .height(danmakuHeight),
             )
         }
 
-        if (overlayVisible && !commentsVisible) {
+        if (overlayVisible && !commentsVisible && !sidePanelVisible) {
             Column(Modifier.fillMaxSize()) {
                 TopChrome(
                     selectedTab = MainTab.SHORTS,
@@ -447,13 +492,9 @@ fun ShortsScreen(
                     onSelectTab = onSelectTab,
                     onAccountClick = onAccountClick,
                     initialFocusRequester = chromeFocusRequester,
-                    commentLabel = current?.let {
-                        "评论 ${formatCount(it.commentCount)}"
-                    },
-                    onCommentsClick = {
-                        current?.let(onOpenComments)
-                    },
-                    onUserInteraction = { autoHideEpoch++ },
+                    onUserInteraction = { overlayInteractionSignals.trySend(Unit) },
+                    showHeaderActions = !sidePanelVisible,
+                    downFocusRequester = bottomActionsFocusRequester,
                 )
                 Spacer(Modifier.weight(1f))
             }
@@ -462,19 +503,9 @@ fun ShortsScreen(
         if (
             current != null &&
             overlayVisible &&
-            !commentsVisible
+            !commentsVisible &&
+            !sidePanelVisible
         ) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .height(210.dp)
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(Color.Transparent, Color.Black.copy(alpha = 0.86f)),
-                        ),
-                    ),
-            )
             Row(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -484,7 +515,13 @@ fun ShortsScreen(
             ) {
                 ShortVideoInfo(
                     video = current,
-                    paused = state.paused,
+                    favoriteSelected = current.id in favoriteIds,
+                    favoritePending = current.id in favoritePendingIds,
+                    topFocusRequester = chromeFocusRequester,
+                    focusRequester = bottomActionsFocusRequester,
+                    onCommentsClick = { onOpenComments(current) },
+                    onFavoriteClick = { onToggleFavorite(current) },
+                    onAuthorClick = { onOpenAuthor(current) },
                     modifier = Modifier.width(infoWidth),
                 )
             }
@@ -509,6 +546,22 @@ fun ShortsScreen(
             )
         }
 
+        if (current != null) {
+            val videoWidth = if (commentsVisible) {
+                (maxWidth - commentsWidth).coerceAtLeast(1.dp)
+            } else {
+                maxWidth
+            }
+            PlaybackProgressIndicator(
+                player = player,
+                videoId = current.id,
+                fallbackDurationMs = current.durationMs,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .width(videoWidth),
+            )
+        }
+
         if (current != null && commentsVisible) {
             CommentsPanel(
                 videoId = current.id,
@@ -528,36 +581,67 @@ fun ShortsScreen(
 }
 
 @Composable
+private fun PlaybackProgressReporter(
+    player: Player,
+    videoId: String?,
+    fallbackDurationMs: Long,
+    intervalMs: Long,
+    onProgress: (videoId: String, positionMs: Long, durationMs: Long) -> Unit,
+) {
+    val latestOnProgress = rememberUpdatedState(onProgress)
+    LaunchedEffect(player, videoId, fallbackDurationMs, intervalMs) {
+        if (videoId == null) return@LaunchedEffect
+        var lastPositionMs = -1L
+        var lastDurationMs = fallbackDurationMs
+        try {
+            while (true) {
+                delay(intervalMs.coerceAtLeast(1_000L))
+                val duration = player.duration.takeIf { it > 0L } ?: fallbackDurationMs
+                if (duration > 0L) {
+                    val position = player.currentPosition.coerceIn(0L, duration)
+                    lastPositionMs = position
+                    lastDurationMs = duration
+                    latestOnProgress.value(videoId, position, duration)
+                }
+            }
+        } finally {
+            if (lastPositionMs >= 0L && lastDurationMs > 0L) {
+                latestOnProgress.value(videoId, lastPositionMs, lastDurationMs)
+            }
+        }
+    }
+}
+
+@Composable
 private fun ShortVideoInfo(
     video: ShortVideo,
-    paused: Boolean,
+    favoriteSelected: Boolean,
+    favoritePending: Boolean,
+    topFocusRequester: FocusRequester,
+    focusRequester: FocusRequester,
+    onCommentsClick: () -> Unit,
+    onFavoriteClick: () -> Unit,
+    onAuthorClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var actionsFocused by remember { mutableStateOf(false) }
+    var selectedAction by remember { mutableIntStateOf(0) }
+    val shape = RoundedCornerShape(20.dp)
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(20.dp))
-            .background(
-                Brush.horizontalGradient(
-                    listOf(Color(0xFF080A0F).copy(alpha = 0.96f), Color.Black.copy(alpha = 0.86f)),
+            .glassSurface(
+                shape = shape,
+                style = GlassStyle(
+                    top = Color(0xE01C2230),
+                    bottom = Color(0xD2080B12),
+                    border = Color.White.copy(alpha = 0.22f),
+                    sheen = Color.White.copy(alpha = 0.12f),
+                    shadowAlpha = 0.4f,
                 ),
+                elevation = 14.dp,
             )
             .padding(horizontal = 18.dp, vertical = 16.dp),
     ) {
-        if (paused) {
-            Surface(
-                color = FocusRing.copy(alpha = 0.95f),
-                shape = RoundedCornerShape(50),
-            ) {
-                Text(
-                    text = "已暂停",
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
-                    color = Color(0xFF17120B),
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-            Spacer(Modifier.height(8.dp))
-        }
         Text(
             text = video.description.ifBlank { "抖音短视频" },
             color = TextPrimary,
@@ -595,6 +679,146 @@ private fun ShortVideoInfo(
                 overflow = TextOverflow.Ellipsis,
             )
         }
+        Spacer(Modifier.height(13.dp))
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(
+                            Color.Transparent,
+                            Color.White.copy(alpha = 0.15f),
+                            Color.Transparent,
+                        ),
+                    ),
+                ),
+        )
+        Spacer(Modifier.height(11.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .focusRequester(focusRequester)
+                .focusProperties {
+                    up = topFocusRequester
+                    down = FocusRequester.Cancel
+                }
+                .onFocusChanged { actionsFocused = it.isFocused }
+                .onPreviewKeyEvent { event ->
+                    when (event.key) {
+                        Key.DirectionLeft, Key.DirectionRight -> {
+                            if (event.type == KeyEventType.KeyDown) {
+                                val step = if (event.key == Key.DirectionLeft) -1 else 1
+                                selectedAction = Math.floorMod(selectedAction + step, 3)
+                            }
+                            true
+                        }
+
+                        Key.DirectionCenter, Key.Enter -> {
+                            if (
+                                event.type == KeyEventType.KeyDown &&
+                                event.nativeKeyEvent.repeatCount == 0
+                            ) {
+                                when (selectedAction) {
+                                    0 -> onCommentsClick()
+                                    1 -> onFavoriteClick()
+                                    else -> onAuthorClick()
+                                }
+                            }
+                            true
+                        }
+
+                        else -> false
+                    }
+                }
+                .focusable()
+                .semantics { contentDescription = "视频操作菜单" },
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            VideoActionItem(
+                icon = Icons.Outlined.ChatBubbleOutline,
+                label = "评论",
+                focused = actionsFocused && selectedAction == 0,
+            )
+            VideoActionItem(
+                icon = if (favoriteSelected) Icons.Filled.Star else Icons.Outlined.Star,
+                label = when {
+                    favoritePending -> "处理中"
+                    favoriteSelected -> "已收藏"
+                    else -> "收藏"
+                },
+                selected = favoriteSelected,
+                focused = actionsFocused && selectedAction == 1,
+            )
+            VideoActionItem(
+                icon = Icons.Outlined.Home,
+                label = "主页",
+                focused = actionsFocused && selectedAction == 2,
+            )
+        }
+    }
+}
+
+@Composable
+private fun VideoActionItem(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    selected: Boolean = false,
+    focused: Boolean,
+) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(
+                when {
+                    focused -> Brush.linearGradient(
+                        listOf(Color(0xFFC51B4C), Color(0xFF72102F)),
+                    )
+                    selected -> Brush.linearGradient(
+                        listOf(
+                            Color.White.copy(alpha = 0.08f),
+                            Color.White.copy(alpha = 0.04f),
+                        ),
+                    )
+                    else -> Brush.linearGradient(
+                        listOf(Color.Transparent, Color.Transparent),
+                    )
+                },
+            )
+            .border(
+                1.dp,
+                when {
+                    focused -> Color.White.copy(alpha = 0.36f)
+                    selected -> Color.White.copy(alpha = 0.12f)
+                    else -> Color.Transparent
+                },
+                RoundedCornerShape(50),
+            )
+            .semantics(mergeDescendants = true) {
+                this.contentDescription = label
+            }
+            .padding(horizontal = 11.dp, vertical = 7.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp),
+            tint = when {
+                focused -> FocusRing
+                selected -> Color(0xFFFFD45C)
+                else -> TextPrimary
+            },
+        )
+        Text(
+            text = label,
+            modifier = Modifier.clearAndSetSemantics { },
+            color = if (focused) FocusRing else TextPrimary,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Medium,
+        )
     }
 }
 

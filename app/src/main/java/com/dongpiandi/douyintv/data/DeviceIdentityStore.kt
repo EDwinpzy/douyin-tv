@@ -27,6 +27,11 @@ class DeviceIdentityStore(
             preferences.edit().putString(KEY_UIFID, it).apply()
         }
 
+    val msToken: String
+        get() = preferences.getString(KEY_MS_TOKEN, null) ?: randomAlphaNumeric(120).also {
+            preferences.edit().putString(KEY_MS_TOKEN, it).apply()
+        }
+
     fun ttwid(): String? = preferences.getString(KEY_TTWID, null)
 
     fun saveTtwid(value: String) {
@@ -56,11 +61,20 @@ class DeviceIdentityStore(
         }
     }
 
+    private fun randomAlphaNumeric(length: Int): String = buildString(length) {
+        repeat(length) {
+            append(MS_TOKEN_ALPHABET[secureRandom.nextInt(MS_TOKEN_ALPHABET.length)])
+        }
+    }
+
     private companion object {
         const val KEY_WEB_ID = "web_id"
         const val KEY_VERIFY_FP = "verify_fp"
         const val KEY_UIFID = "uifid"
         const val KEY_TTWID = "ttwid"
+        const val KEY_MS_TOKEN = "ms_token"
         const val HEX = "0123456789abcdef"
+        const val MS_TOKEN_ALPHABET =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789="
     }
 }
