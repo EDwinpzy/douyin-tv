@@ -1,66 +1,62 @@
 package com.dongpiandi.douyintv.ui
 
 import com.dongpiandi.douyintv.model.DanmakuMessage
-import com.dongpiandi.douyintv.model.ShortComment
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DanmakuTimelineTest {
     @Test
-    fun fillsAfterLastOfficialMessageUntilVideoEnds() {
+    fun preservesOriginalOffsetsWithoutFillingGaps() {
         val official = listOf(
-            DanmakuMessage("official-1", "官方弹幕", 1_000),
+            DanmakuMessage("first", "开头弹幕", 1_000),
+            DanmakuMessage("last", "结尾弹幕", 25_000),
         )
 
         val timeline = buildDanmakuTimeline(
             official = official,
-            comments = listOf(comment("评论弹幕")),
             durationMs = 30_000,
         )
 
-        val filler = timeline.filter { it.id.startsWith("comment-danmaku-") }
-        assertTrue(filler.isNotEmpty())
-        assertTrue(filler.all { it.offsetMs > 1_000 })
-        assertTrue(filler.last().offsetMs > 25_000)
+        assertEquals(official, timeline)
     }
 
     @Test
-    fun startsFillingFromTheBeginningWithoutOfficialDanmaku() {
-        val timeline = buildDanmakuTimeline(
-            official = emptyList(),
-            comments = listOf(comment("第一条")),
-            durationMs = 10_000,
-        )
-
-        assertEquals(600L, timeline.first().offsetMs)
-        assertTrue(timeline.last().offsetMs >= 8_000)
-        assertTrue(timeline.all { it.offsetMs <= 9_200 })
-    }
-
-    @Test
-    fun keepsOfficialMessagesOnlyWhenCommentsAreUnavailable() {
+    fun removesExactDuplicatesButKeepsRealRepeatedTextLater() {
         val official = listOf(
-            DanmakuMessage("official-1", "官方弹幕", 1_000),
+            DanmakuMessage("one", "重复弹幕", 1_000),
+            DanmakuMessage("one", "重复弹幕", 1_000),
+            DanmakuMessage("two", "重复弹幕", 8_000),
         )
 
-        assertEquals(
-            official,
-            buildDanmakuTimeline(
-                official = official,
-                comments = emptyList(),
-                durationMs = 30_000,
-            ),
+        val timeline = buildDanmakuTimeline(
+            official = official,
+            durationMs = 30_000,
         )
+
+        assertEquals(2, timeline.size)
+        assertEquals(listOf(1_000L, 8_000L), timeline.map(DanmakuMessage::offsetMs))
     }
 
-    private fun comment(text: String) = ShortComment(
-        id = text,
-        text = text,
-        nickname = "",
-        avatarUrl = null,
-        likeCount = 0,
-        replyCount = 0,
-        ipLabel = "",
-    )
+    @Test
+    fun dropsMessagesOutsideTheTimeline() {
+        val official = listOf(
+            DanmakuMessage("valid", "有效弹幕", 1_000),
+            DanmakuMessage("late", "越界弹幕", 31_000),
+        )
+
+        val timeline = buildDanmakuTimeline(
+            official = official,
+            durationMs = 30_000,
+        )
+
+        assertEquals(listOf("valid"), timeline.map(DanmakuMessage::id))
+    }
+
+    @Test
+    fun keepsTimelineEmptyWhenThereAreNoOfficialMessages() {
+        assertEquals(
+            emptyList<DanmakuMessage>(),
+            buildDanmakuTimeline(official = emptyList(), durationMs = 30_000),
+        )
+    }
 }

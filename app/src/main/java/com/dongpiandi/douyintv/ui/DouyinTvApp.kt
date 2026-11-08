@@ -163,6 +163,7 @@ fun DouyinTvApp(viewModel: MainViewModel) {
                     onFocusRoom = viewModel::rememberLiveFocus,
                     onFocusRestored = viewModel::consumeLiveFocusRestore,
                     onRefresh = { viewModel.loadLiveRooms(reset = false) },
+                    focusEnabled = !state.accountMenuVisible,
                 )
             }
         }

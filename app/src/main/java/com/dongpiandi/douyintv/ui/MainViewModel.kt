@@ -241,7 +241,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val officialDanmaku = results.second.getOrDefault(emptyList())
             val visibleDanmaku = buildDanmakuTimeline(
                 official = officialDanmaku,
-                comments = comments,
                 durationMs = video.durationMs,
             )
             _state.update { current ->

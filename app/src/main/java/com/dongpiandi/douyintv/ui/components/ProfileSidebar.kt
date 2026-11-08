@@ -2,6 +2,7 @@
 
 package com.dongpiandi.douyintv.ui.components
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
@@ -12,10 +13,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -27,18 +30,19 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Verified
-import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Logout
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Star
-import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -115,7 +119,7 @@ fun MyHomeSidebar(
     }
     val historyFocusRequester = remember { FocusRequester() }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(selectedTab) {
         delay(80)
         tabRequesters[selectedTab]?.requestFocus()
     }
@@ -133,6 +137,7 @@ fun MyHomeSidebar(
             followingCount = currentProfile?.followingCount,
             totalFavorited = currentProfile?.totalFavorited,
             verified = true,
+            onLogout = currentProfile?.let { onLogout },
         )
         Spacer(Modifier.height(8.dp))
         SidebarTabs(
@@ -168,10 +173,7 @@ fun MyHomeSidebar(
 
             MyHomeTab.PROFILE -> MyProfileContent(
                 profile = profile,
-                historyCount = history.size,
-                favoritesCount = favorites.size,
                 onRetry = onRetryProfile,
-                onLogout = onLogout,
             )
         }
     }
@@ -266,7 +268,7 @@ private fun SidebarFrame(
     onClose: () -> Unit,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    val closeFocusRequester = remember { FocusRequester() }
+    BackHandler(onBack = onClose)
     BoxWithConstraints(
         modifier = Modifier.fillMaxSize(),
     ) {
@@ -300,7 +302,7 @@ private fun SidebarFrame(
                 ) {
                     Text(
                         text = title,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.fillMaxWidth(),
                         color = TextPrimary,
                         style = MaterialTheme.typography.titleMedium.copy(
                             fontSize = 16.sp,
@@ -309,12 +311,6 @@ private fun SidebarFrame(
                         fontWeight = FontWeight.Bold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                    )
-                    RoundIconButton(
-                        icon = Icons.Rounded.Close,
-                        contentDescription = "关闭",
-                        focusRequester = closeFocusRequester,
-                        onClick = onClose,
                     )
                 }
                 Spacer(Modifier.height(8.dp))
@@ -334,7 +330,9 @@ private fun ProfileIdentity(
     followingCount: Long?,
     totalFavorited: Long?,
     verified: Boolean,
+    onLogout: (() -> Unit)? = null,
 ) {
+    val logoutFocusRequester = remember { FocusRequester() }
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -345,6 +343,7 @@ private fun ProfileIdentity(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = name,
+                    modifier = Modifier.weight(1f, fill = false),
                     color = TextPrimary,
                     style = MaterialTheme.typography.titleMedium.copy(
                         fontSize = 16.sp,
@@ -360,6 +359,15 @@ private fun ProfileIdentity(
                         contentDescription = null,
                         modifier = Modifier.size(13.dp),
                         tint = Color(0xFFFFC94A),
+                    )
+                }
+                if (onLogout != null) {
+                    Spacer(Modifier.width(6.dp))
+                    SidebarPillButton(
+                        label = "退出登录",
+                        focusRequester = logoutFocusRequester,
+                        compact = true,
+                        onClick = onLogout,
                     )
                 }
             }
@@ -586,16 +594,19 @@ private fun SidebarVideoList(
         videos.isEmpty() -> SidebarEmptyState(emptyText)
 
         else -> {
-            LazyColumn(
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(2),
                 modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(5.dp),
+                contentPadding = PaddingValues(bottom = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 items(
                     items = videos,
                     key = ShortVideo::id,
                 ) { video ->
                     val requester = remember(video.id) { FocusRequester() }
-                    SidebarVideoRow(
+                    SidebarVideoCard(
                         video = video,
                         progress = progressByVideoId[video.id],
                         focusRequester = if (video.id == videos.first().id) {
@@ -607,7 +618,10 @@ private fun SidebarVideoList(
                     )
                 }
                 if (error != null) {
-                    item(key = "sidebar-error") {
+                    item(
+                        key = "sidebar-error",
+                        span = { GridItemSpan(maxLineSpan) },
+                    ) {
                         Text(
                             text = error,
                             modifier = Modifier.padding(vertical = 5.dp),
@@ -620,7 +634,10 @@ private fun SidebarVideoList(
                     }
                 }
                 if (hasMore) {
-                    item(key = "sidebar-load-more") {
+                    item(
+                        key = "sidebar-load-more",
+                        span = { GridItemSpan(maxLineSpan) },
+                    ) {
                         LaunchedEffect(videos.size, hasMore) {
                             if (!loadingMore) onLoadMore()
                         }
@@ -646,7 +663,7 @@ private fun SidebarVideoList(
 }
 
 @Composable
-private fun SidebarVideoRow(
+private fun SidebarVideoCard(
     video: ShortVideo,
     progress: PlaybackProgress?,
     focusRequester: FocusRequester,
@@ -654,44 +671,26 @@ private fun SidebarVideoRow(
 ) {
     var focused by remember { mutableStateOf(false) }
     val lowTier = LocalDevicePerformanceProfile.current.lowTier
-    val scale by animateFloatAsState(
-        targetValue = if (focused && !lowTier) 1.012f else 1f,
-        animationSpec = if (lowTier) snap() else spring(),
-        label = "sidebarVideoScale",
-    )
-    val rowShape = RoundedCornerShape(10.dp)
-    val motionLayer = if (lowTier) {
-        Modifier
-    } else {
-        Modifier.graphicsLayer {
-            scaleX = scale
-            scaleY = scale
-        }
-    }
-    Box(
+    val cardShape = RoundedCornerShape(12.dp)
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .then(motionLayer)
             .glassSurface(
-                shape = rowShape,
+                shape = cardShape,
                 style = GlassStyle(
-                    top = if (focused) Color(0xE6343D52) else Color(0x3D1B2130),
-                    bottom = if (focused) Color(0xD1121825) else Color(0x2E10151F),
+                    top = if (focused) Color(0xF03C2231) else Color(0xB81A2030),
+                    bottom = if (focused) Color(0xE01D0A13) else Color(0xA60C111B),
                     border = if (focused) {
-                        FocusRing.copy(alpha = 0.92f)
+                        Color.White.copy(alpha = 0.94f)
                     } else {
-                        Color.White.copy(alpha = 0.09f)
+                        Color.White.copy(alpha = 0.12f)
                     },
-                    sheen = Color.White.copy(alpha = if (focused) 0.13f else 0.06f),
-                    shadowAlpha = if (focused) 0.3f else 0.14f,
+                    sheen = Color.White.copy(alpha = if (focused) 0.15f else 0.055f),
+                    shadowAlpha = if (focused) 0.28f else 0.12f,
                 ),
-                elevation = if (focused) 8.dp else 2.dp,
+                elevation = if (focused) 7.dp else 2.dp,
             )
             .focusRequester(focusRequester)
-            .focusProperties {
-                left = FocusRequester.Cancel
-                right = FocusRequester.Cancel
-            }
             .onFocusChanged { focused = it.isFocused }
             .focusable()
             .onPreviewKeyEvent { event ->
@@ -706,91 +705,86 @@ private fun SidebarVideoRow(
                 }
             },
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 5.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(16f / 9f)
+                .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
+                .background(Color(0xFF11151E)),
         ) {
+            video.coverUrl?.let { coverUrl ->
+                AsyncImage(
+                    model = coverUrl,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                )
+            }
             Box(
                 modifier = Modifier
-                    .width(70.dp)
-                    .height(41.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(Color(0xFF11151E)),
-            ) {
-                video.coverUrl?.let { coverUrl ->
-                    AsyncImage(
-                        model = coverUrl,
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop,
-                    )
-                }
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(Color.Transparent, Color.Black.copy(alpha = 0.42f)),
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(
+                                Color.Transparent,
+                                Color.Transparent,
+                                Color.Black.copy(alpha = 0.72f),
                             ),
                         ),
+                    ),
+            )
+            Text(
+                text = formatDuration(progress?.durationMs ?: video.durationMs),
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(horizontal = 6.dp, vertical = 5.dp),
+                color = TextPrimary,
+                style = MaterialTheme.typography.labelMedium.copy(
+                    fontSize = 9.sp,
+                    lineHeight = 11.sp,
+                ),
+            )
+            VideoProgressBar(
+                progress = progress?.fraction ?: 0f,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth(),
+                height = 2.dp,
+            )
+        }
+        Column(
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 6.dp),
+        ) {
+            Text(
+                text = video.description.ifBlank { "抖音短视频" },
+                color = TextPrimary,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontSize = 10.5.sp,
+                    lineHeight = 13.sp,
+                ),
+                fontWeight = FontWeight.Medium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(3.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Rounded.PlayArrow,
+                    contentDescription = null,
+                    modifier = Modifier.size(9.dp),
+                    tint = TextSecondary,
                 )
+                Spacer(Modifier.width(2.dp))
                 Text(
-                    text = formatDuration(progress?.durationMs ?: video.durationMs),
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(3.dp),
-                    color = TextPrimary,
+                    text = buildMetadata(video, progress),
+                    modifier = Modifier.weight(1f),
+                    color = TextSecondary,
                     style = MaterialTheme.typography.labelMedium.copy(
                         fontSize = 9.sp,
                         lineHeight = 11.sp,
                     ),
-                )
-            }
-            Spacer(Modifier.width(7.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = video.description.ifBlank { "抖音短视频" },
-                    color = TextPrimary,
-                    style = MaterialTheme.typography.bodyMedium.copy(
-                        fontSize = 11.5.sp,
-                        lineHeight = 14.sp,
-                    ),
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 2,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.height(3.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Rounded.PlayArrow,
-                        contentDescription = null,
-                        modifier = Modifier.size(10.dp),
-                        tint = TextSecondary,
-                    )
-                    Spacer(Modifier.width(2.dp))
-                    Text(
-                        text = buildMetadata(video, progress),
-                        modifier = Modifier.weight(1f),
-                        color = TextSecondary,
-                        style = MaterialTheme.typography.labelMedium.copy(
-                            fontSize = 9.5.sp,
-                            lineHeight = 11.sp,
-                        ),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Icon(
-                        imageVector = Icons.Rounded.MoreVert,
-                        contentDescription = null,
-                        modifier = Modifier.size(13.dp),
-                        tint = TextSecondary.copy(alpha = 0.72f),
-                    )
-                }
-                Spacer(Modifier.height(4.dp))
-                VideoProgressBar(
-                    progress = progress?.fraction ?: 0f,
-                    modifier = Modifier.fillMaxWidth(),
-                    height = 2.dp,
                 )
             }
         }
@@ -800,48 +794,13 @@ private fun SidebarVideoRow(
 @Composable
 private fun MyProfileContent(
     profile: MyProfileUiState,
-    historyCount: Int,
-    favoritesCount: Int,
     onRetry: () -> Unit,
-    onLogout: () -> Unit,
 ) {
     val retryFocusRequester = remember { FocusRequester() }
-    val logoutFocusRequester = remember { FocusRequester() }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        item(key = "profile-stats") {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .glassSurface(
-                        shape = RoundedCornerShape(14.dp),
-                        style = GlassStyle(
-                            top = Color(0x402B3447),
-                            bottom = Color(0x2E10151F),
-                            border = Color.White.copy(alpha = 0.11f),
-                            sheen = Color.White.copy(alpha = 0.07f),
-                            shadowAlpha = 0.22f,
-                        ),
-                        elevation = 4.dp,
-                    ),
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 9.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                ) {
-                    ProfileMetric("$historyCount", "观看")
-                    ProfileMetric("$favoritesCount", "收藏")
-                    ProfileMetric(
-                        if (profile.profile != null) "已登录" else "—",
-                        "账号",
-                    )
-                }
-            }
-        }
         if (profile.loading) {
             item(key = "profile-loading") {
                 Row(
@@ -878,49 +837,6 @@ private fun MyProfileContent(
                 }
             }
         }
-        item(key = "profile-note") {
-            Text(
-                text = "观看历史与播放进度仅保存在本机。登录凭证继续使用 Android Keystore 加密保存。",
-                color = TextSecondary,
-                style = MaterialTheme.typography.bodyMedium.copy(
-                    fontSize = 11.sp,
-                    lineHeight = 15.sp,
-                ),
-            )
-        }
-        item(key = "profile-logout") {
-            Spacer(Modifier.height(2.dp))
-            SidebarPillButton(
-                label = "退出登录",
-                focusRequester = logoutFocusRequester,
-                primary = true,
-                onClick = onLogout,
-            )
-        }
-    }
-}
-
-@Composable
-private fun ProfileMetric(value: String, label: String) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(
-            text = value,
-            color = TextPrimary,
-            style = MaterialTheme.typography.titleMedium.copy(
-                fontSize = 14.sp,
-                lineHeight = 16.sp,
-            ),
-            fontWeight = FontWeight.Bold,
-        )
-        Spacer(Modifier.height(1.dp))
-        Text(
-            text = label,
-            color = TextSecondary,
-            style = MaterialTheme.typography.labelMedium.copy(
-                fontSize = 10.sp,
-                lineHeight = 12.sp,
-            ),
-        )
     }
 }
 
@@ -944,6 +860,7 @@ private fun SidebarPillButton(
     onClick: () -> Unit,
     focusRequester: FocusRequester? = null,
     primary: Boolean = false,
+    compact: Boolean = false,
 ) {
     var focused by remember { mutableStateOf(false) }
     Surface(
@@ -977,54 +894,16 @@ private fun SidebarPillButton(
     ) {
         Text(
             text = label,
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+            modifier = Modifier.padding(
+                horizontal = if (compact) 8.dp else 14.dp,
+                vertical = if (compact) 3.dp else 7.dp,
+            ),
             color = if (focused) Color(0xFF17120B) else TextPrimary,
             style = MaterialTheme.typography.labelLarge.copy(
-                fontSize = 12.sp,
-                lineHeight = 15.sp,
+                fontSize = if (compact) 9.5.sp else 12.sp,
+                lineHeight = if (compact) 12.sp else 15.sp,
             ),
             fontWeight = FontWeight.SemiBold,
-        )
-    }
-}
-
-@Composable
-private fun RoundIconButton(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    contentDescription: String,
-    focusRequester: FocusRequester,
-    onClick: () -> Unit,
-) {
-    var focused by remember { mutableStateOf(false) }
-    Box(
-        modifier = Modifier
-            .size(28.dp)
-            .clip(CircleShape)
-            .background(
-                if (focused) Color.White.copy(alpha = 0.18f)
-                else Color.Transparent,
-            )
-            .focusRequester(focusRequester)
-            .onFocusChanged { focused = it.isFocused }
-            .focusable()
-            .onPreviewKeyEvent { event ->
-                if (
-                    (event.key == Key.DirectionCenter || event.key == Key.Enter) &&
-                    event.type == KeyEventType.KeyDown
-                ) {
-                    if (event.nativeKeyEvent.repeatCount == 0) onClick()
-                    true
-                } else {
-                    false
-                }
-            },
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = contentDescription,
-            modifier = Modifier.size(18.dp),
-            tint = if (focused) FocusRing else TextPrimary,
         )
     }
 }

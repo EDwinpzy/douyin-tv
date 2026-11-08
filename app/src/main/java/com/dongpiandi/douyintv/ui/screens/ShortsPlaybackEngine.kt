@@ -3,7 +3,7 @@
 package com.dongpiandi.douyintv.ui.screens
 
 import android.content.Context
-import android.os.Looper
+import android.os.HandlerThread
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.DefaultLoadControl
@@ -37,12 +37,13 @@ internal class ShortsPlaybackEngine(
     )
     private val managedItems = linkedMapOf<String, ManagedItem>()
     private var currentIndex = C.INDEX_UNSET
+    private val playbackThread = HandlerThread("ShortsPlayback").apply { start() }
 
     val player: ExoPlayer
     private val preloadManager: DefaultPreloadManager
 
     init {
-        val playbackLooper = Looper.getMainLooper()
+        val playbackLooper = playbackThread.looper
         player = ExoPlayer.Builder(appContext)
             .setRenderersFactory(renderersFactory)
             .setMediaSourceFactory(mediaSourceFactory)
@@ -128,6 +129,7 @@ internal class ShortsPlaybackEngine(
         clearPreloadWindow()
         preloadManager.release()
         player.release()
+        playbackThread.quitSafely()
     }
 
     private fun clearPreloadWindow() {

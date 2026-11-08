@@ -21,7 +21,7 @@ import com.dongpiandi.douyintv.model.DanmakuMessage
 import kotlinx.coroutines.delay
 
 private const val LANE_COUNT = 3
-private const val TRAVEL_DURATION_MS = 11_000L
+private const val TRAVEL_DURATION_MS = 18_000L
 private const val DEFAULT_REFRESH_INTERVAL_MS = 33L
 
 internal data class ScheduledDanmaku(
@@ -32,27 +32,20 @@ internal data class ScheduledDanmaku(
 internal fun scheduleDanmaku(
     messages: List<DanmakuMessage>,
     laneCount: Int = LANE_COUNT,
-    travelDurationMs: Long = TRAVEL_DURATION_MS,
 ): List<List<ScheduledDanmaku>> {
     if (laneCount <= 0) return emptyList()
     val lanes = List(laneCount) { mutableListOf<ScheduledDanmaku>() }
-    val laneFreeAt = LongArray(laneCount)
-    val travel = travelDurationMs.coerceAtLeast(1L)
     val ordered = messages.asSequence()
         .filter { it.text.isNotBlank() }
         .distinctBy(DanmakuMessage::id)
         .sortedWith(compareBy(DanmakuMessage::offsetMs, DanmakuMessage::id))
 
-    ordered.forEach { message ->
-        var laneIndex = 0
-        for (candidate in laneFreeAt.indices) {
-            if (laneFreeAt[candidate] < laneFreeAt[laneIndex]) {
-                laneIndex = candidate
-            }
-        }
-        val startMs = maxOf(message.offsetMs.coerceAtLeast(0), laneFreeAt[laneIndex])
-        lanes[laneIndex] += ScheduledDanmaku(message, startMs)
-        laneFreeAt[laneIndex] = startMs + travel
+    ordered.forEachIndexed { index, message ->
+        val laneIndex = index % laneCount
+        lanes[laneIndex] += ScheduledDanmaku(
+            message = message,
+            startMs = message.offsetMs.coerceAtLeast(0),
+        )
     }
     return lanes
 }
@@ -63,12 +56,13 @@ fun DanmakuOverlay(
     player: Player,
     modifier: Modifier = Modifier,
     refreshIntervalMs: Long = DEFAULT_REFRESH_INTERVAL_MS,
+    animating: Boolean = true,
 ) {
     var positionMs by remember { mutableLongStateOf(player.currentPosition.coerceAtLeast(0)) }
     val safeRefreshIntervalMs = refreshIntervalMs.coerceAtLeast(16L)
 
-    LaunchedEffect(player, messages.isEmpty(), safeRefreshIntervalMs) {
-        if (messages.isEmpty()) return@LaunchedEffect
+    LaunchedEffect(player, messages.isEmpty(), safeRefreshIntervalMs, animating) {
+        if (messages.isEmpty() || !animating) return@LaunchedEffect
         while (true) {
             val nextPosition = player.currentPosition.coerceAtLeast(0)
             if (nextPosition != positionMs) {
@@ -80,19 +74,11 @@ fun DanmakuOverlay(
 
     val lanes = remember(messages) { scheduleDanmaku(messages) }
     val density = LocalDensity.current
-    val textSize = with(density) { 20.sp.toPx() }
+    val textSize = with(density) { 22.sp.toPx() }
     val horizontalPadding = with(density) { 8.dp.toPx() }
-    val shadowOffset = with(density) { 1.5.dp.toPx() }
     val textPaint = remember(textSize) {
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = android.graphics.Color.WHITE
-            this.textSize = textSize
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-        }
-    }
-    val shadowPaint = remember(textSize, shadowOffset) {
-        Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = android.graphics.Color.argb(188, 0, 0, 0)
             this.textSize = textSize
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         }
@@ -127,11 +113,10 @@ fun DanmakuOverlay(
                 (textPaint.ascent() + textPaint.descent()) / 2f
             drawContext.canvas.nativeCanvas.drawText(
                 text,
-                x + shadowOffset,
-                baseline + shadowOffset,
-                shadowPaint,
+                x,
+                baseline,
+                textPaint,
             )
-            drawContext.canvas.nativeCanvas.drawText(text, x, baseline, textPaint)
         }
     }
 }

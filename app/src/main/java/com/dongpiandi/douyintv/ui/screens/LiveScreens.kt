@@ -94,6 +94,7 @@ fun LiveGridScreen(
     onFocusRoom: (String) -> Unit,
     onFocusRestored: () -> Unit,
     onRefresh: () -> Unit,
+    focusEnabled: Boolean = true,
 ) {
     val gridState = rememberLazyGridState()
     val requesters = remember { mutableStateMapOf<String, FocusRequester>() }
@@ -103,8 +104,9 @@ fun LiveGridScreen(
         state.rooms.size,
         state.loaded,
         state.restoreFocusRoomId,
+        focusEnabled,
     ) {
-        if (state.rooms.isEmpty()) return@LaunchedEffect
+        if (!focusEnabled || state.rooms.isEmpty()) return@LaunchedEffect
         val targetId = state.restoreFocusRoomId
             ?: state.lastFocusedRoomId
             ?: state.rooms.first().id
@@ -115,8 +117,10 @@ fun LiveGridScreen(
         if (state.restoreFocusRoomId != null) onFocusRestored()
     }
 
-    LaunchedEffect(state.error) {
-        if (state.error != null && state.rooms.isEmpty()) retryFocusRequester.requestFocus()
+    LaunchedEffect(state.error, focusEnabled) {
+        if (focusEnabled && state.error != null && state.rooms.isEmpty()) {
+            retryFocusRequester.requestFocus()
+        }
     }
 
     Column(
@@ -133,7 +137,7 @@ fun LiveGridScreen(
             isLoggedIn = isLoggedIn,
             onSelectTab = onSelectTab,
             onAccountClick = onAccountClick,
-            onHistoryClick = onHistoryClick,
+            focusEnabled = focusEnabled,
         )
         Row(
             modifier = Modifier
@@ -180,6 +184,7 @@ fun LiveGridScreen(
                         LiveRoomCard(
                             room = room,
                             focusRequester = requester,
+                            focusEnabled = focusEnabled,
                             onFocus = {
                                 onFocusRoom(room.id)
                             },
@@ -198,7 +203,7 @@ fun LiveGridScreen(
                 }
             }
 
-            state.error?.let { error ->
+            state.error?.takeIf { focusEnabled }?.let { error ->
                 if (state.rooms.isEmpty()) {
                     ErrorPanel(
                         message = error,
@@ -217,6 +222,7 @@ fun LiveGridScreen(
 private fun LiveRoomCard(
     room: LiveRoom,
     focusRequester: FocusRequester,
+    focusEnabled: Boolean,
     onFocus: () -> Unit,
     onClick: () -> Unit,
 ) {
@@ -235,7 +241,13 @@ private fun LiveRoomCard(
                 focused = it.isFocused
                 if (it.isFocused) onFocus()
             }
-            .clickable(onClick = onClick)
+            .then(
+                if (focusEnabled) {
+                    Modifier.clickable(onClick = onClick)
+                } else {
+                    Modifier
+                },
+            )
             .padding(5.dp),
     ) {
         Box(
