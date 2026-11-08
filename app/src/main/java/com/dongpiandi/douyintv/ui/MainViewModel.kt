@@ -520,7 +520,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun closeAuthorVideos() {
         _state.update {
             it.copy(
-                overlayVisible = false,
+                overlayVisible = true,
                 authorVideos = it.authorVideos.copy(
                     visible = false,
                 ),

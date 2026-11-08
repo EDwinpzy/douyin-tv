@@ -139,6 +139,8 @@ fun ShortsScreen(
     val bottomActionsFocusRequester = remember { FocusRequester() }
     val retryFocusRequester = remember { FocusRequester() }
     var focusChromeRequested by remember { mutableStateOf(false) }
+    var focusBottomActionsRequested by remember { mutableStateOf(false) }
+    var selectedBottomAction by remember { mutableIntStateOf(0) }
     val overlayInteractionSignals = remember { Channel<Unit>(Channel.CONFLATED) }
     var videoFocused by remember { mutableStateOf(false) }
     val performanceProfile = remember(context) {
@@ -317,6 +319,35 @@ fun ShortsScreen(
             delay(16)
             chromeFocusRequester.requestFocus()
             focusChromeRequested = false
+        }
+    }
+
+    LaunchedEffect(
+        overlayVisible,
+        focusBottomActionsRequested,
+        commentsVisible,
+        sidePanelVisible,
+        searchVisible,
+    ) {
+        if (
+            overlayVisible &&
+            focusBottomActionsRequested &&
+            current != null &&
+            !commentsVisible &&
+            !sidePanelVisible &&
+            !searchVisible
+        ) {
+            withFrameNanos { }
+            delay(16)
+            bottomActionsFocusRequester.requestFocus()
+            focusBottomActionsRequested = false
+        } else if (
+            !overlayVisible &&
+            !commentsVisible &&
+            !sidePanelVisible &&
+            !searchVisible
+        ) {
+            focusBottomActionsRequested = false
         }
     }
 
@@ -537,9 +568,17 @@ fun ShortsScreen(
                     favoritePending = current.id in favoritePendingIds,
                     topFocusRequester = chromeFocusRequester,
                     focusRequester = bottomActionsFocusRequester,
-                    onCommentsClick = { onOpenComments(current) },
+                    selectedAction = selectedBottomAction,
+                    onSelectedActionChange = { selectedBottomAction = it },
+                    onCommentsClick = {
+                        focusBottomActionsRequested = true
+                        onOpenComments(current)
+                    },
                     onFavoriteClick = { onToggleFavorite(current) },
-                    onAuthorClick = { onOpenAuthor(current) },
+                    onAuthorClick = {
+                        focusBottomActionsRequested = true
+                        onOpenAuthor(current)
+                    },
                     modifier = Modifier.width(infoWidth),
                 )
             }
@@ -632,13 +671,14 @@ private fun ShortVideoInfo(
     favoritePending: Boolean,
     topFocusRequester: FocusRequester,
     focusRequester: FocusRequester,
+    selectedAction: Int,
+    onSelectedActionChange: (Int) -> Unit,
     onCommentsClick: () -> Unit,
     onFavoriteClick: () -> Unit,
     onAuthorClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var actionsFocused by remember { mutableStateOf(false) }
-    var selectedAction by remember { mutableIntStateOf(0) }
     val shape = RoundedCornerShape(20.dp)
     Column(
         modifier = modifier
@@ -722,7 +762,9 @@ private fun ShortVideoInfo(
                         Key.DirectionLeft, Key.DirectionRight -> {
                             if (event.type == KeyEventType.KeyDown) {
                                 val step = if (event.key == Key.DirectionLeft) -1 else 1
-                                selectedAction = Math.floorMod(selectedAction + step, 3)
+                                onSelectedActionChange(
+                                    Math.floorMod(selectedAction + step, 3),
+                                )
                             }
                             true
                         }
