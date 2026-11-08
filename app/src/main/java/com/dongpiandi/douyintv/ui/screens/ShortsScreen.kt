@@ -105,9 +105,11 @@ fun ShortsScreen(
     engagement: EngagementUiState,
     overlayVisible: Boolean,
     sidePanelVisible: Boolean,
+    searchVisible: Boolean,
     isLoggedIn: Boolean,
     onSelectTab: (MainTab) -> Unit,
     onAccountClick: () -> Unit,
+    onSearchClick: () -> Unit,
     onHistoryClick: () -> Unit,
     onShowOverlay: () -> Unit,
     onHideOverlay: () -> Unit,
@@ -137,6 +139,8 @@ fun ShortsScreen(
     val bottomActionsFocusRequester = remember { FocusRequester() }
     val retryFocusRequester = remember { FocusRequester() }
     var focusChromeRequested by remember { mutableStateOf(false) }
+    var focusBottomActionsRequested by remember { mutableStateOf(false) }
+    var selectedBottomAction by remember { mutableIntStateOf(0) }
     val overlayInteractionSignals = remember { Channel<Unit>(Channel.CONFLATED) }
     var videoFocused by remember { mutableStateOf(false) }
     val performanceProfile = remember(context) {
@@ -247,6 +251,7 @@ fun ShortsScreen(
         overlayVisible,
         commentsVisible,
         sidePanelVisible,
+        searchVisible,
         lifecycleState,
     ) {
         if (
@@ -254,6 +259,7 @@ fun ShortsScreen(
             !overlayVisible &&
             !commentsVisible &&
             !sidePanelVisible &&
+            !searchVisible &&
             lifecycleState.isAtLeast(Lifecycle.State.RESUMED)
         ) {
             withFrameNanos { }
@@ -268,13 +274,15 @@ fun ShortsScreen(
         state.paused,
         commentsVisible,
         sidePanelVisible,
+        searchVisible,
     ) {
         if (
             !overlayVisible ||
             current == null ||
             state.paused ||
             commentsVisible ||
-            sidePanelVisible
+            sidePanelVisible ||
+            searchVisible
         ) {
             return@LaunchedEffect
         }
@@ -298,17 +306,48 @@ fun ShortsScreen(
         focusChromeRequested,
         commentsVisible,
         sidePanelVisible,
+        searchVisible,
     ) {
         if (
             overlayVisible &&
             focusChromeRequested &&
             !commentsVisible &&
-            !sidePanelVisible
+            !sidePanelVisible &&
+            !searchVisible
         ) {
             withFrameNanos { }
             delay(16)
             chromeFocusRequester.requestFocus()
             focusChromeRequested = false
+        }
+    }
+
+    LaunchedEffect(
+        overlayVisible,
+        focusBottomActionsRequested,
+        commentsVisible,
+        sidePanelVisible,
+        searchVisible,
+    ) {
+        if (
+            overlayVisible &&
+            focusBottomActionsRequested &&
+            current != null &&
+            !commentsVisible &&
+            !sidePanelVisible &&
+            !searchVisible
+        ) {
+            withFrameNanos { }
+            delay(16)
+            bottomActionsFocusRequester.requestFocus()
+            focusBottomActionsRequested = false
+        } else if (
+            !overlayVisible &&
+            !commentsVisible &&
+            !sidePanelVisible &&
+            !searchVisible
+        ) {
+            focusBottomActionsRequested = false
         }
     }
 
@@ -331,6 +370,7 @@ fun ShortsScreen(
                     !videoFocused ||
                     overlayVisible ||
                     commentsVisible ||
+                    searchVisible ||
                     current == null ||
                     state.error != null
                 ) {
@@ -350,13 +390,18 @@ fun ShortsScreen(
         val infoWidth = (maxWidth * 0.28f).coerceAtMost(280.dp)
         val danmakuHeight = (maxHeight * DANMAKU_HEIGHT_FRACTION)
             .coerceAtLeast(72.dp)
-        val commentsWidth = commentsPanelWidth(maxWidth)
-        val videoRegionWidth = if (commentsVisible) {
-            (maxWidth - commentsWidth).coerceAtLeast(1.dp)
+        val rightPanelWidth = when {
+            commentsVisible -> commentsPanelWidth(maxWidth)
+            sidePanelVisible -> maxWidth * (1f / 3f)
+            else -> 0.dp
+        }
+        val hasRightPanel = commentsVisible || sidePanelVisible
+        val videoRegionWidth = if (hasRightPanel) {
+            (maxWidth - rightPanelWidth).coerceAtLeast(1.dp)
         } else {
             maxWidth
         }
-        val videoRegionModifier = if (commentsVisible) {
+        val videoRegionModifier = if (hasRightPanel) {
             Modifier
                 .fillMaxHeight()
                 .width(videoRegionWidth)
@@ -438,7 +483,9 @@ fun ShortsScreen(
                     }
                     true
                 }
-                .focusable(enabled = !commentsVisible && !sidePanelVisible),
+                .focusable(
+                    enabled = !commentsVisible && !sidePanelVisible && !searchVisible,
+                ),
         )
         Box(
             modifier = videoRegionModifier,
@@ -470,21 +517,21 @@ fun ShortsScreen(
 
         if (
             current != null &&
-            !commentsVisible &&
-            !sidePanelVisible
+            !commentsVisible
         ) {
             DanmakuOverlay(
                 messages = engagement.danmaku,
                 player = player,
                 refreshIntervalMs = performanceProfile.danmakuFrameIntervalMs,
-                animating = !overlayVisible,
+                animating = true,
                 modifier = Modifier
-                    .align(Alignment.TopCenter)
+                    .align(Alignment.TopStart)
+                    .width(videoRegionWidth)
                     .height(danmakuHeight),
             )
         }
 
-        if (overlayVisible && !commentsVisible && !sidePanelVisible) {
+        if (overlayVisible && !commentsVisible && !sidePanelVisible && !searchVisible) {
             Column(Modifier.fillMaxSize()) {
                 TopChrome(
                     selectedTab = MainTab.SHORTS,
@@ -494,6 +541,7 @@ fun ShortsScreen(
                     initialFocusRequester = chromeFocusRequester,
                     onUserInteraction = { overlayInteractionSignals.trySend(Unit) },
                     showHeaderActions = !sidePanelVisible,
+                    onSearchClick = onSearchClick,
                     downFocusRequester = bottomActionsFocusRequester,
                 )
                 Spacer(Modifier.weight(1f))
@@ -504,7 +552,8 @@ fun ShortsScreen(
             current != null &&
             overlayVisible &&
             !commentsVisible &&
-            !sidePanelVisible
+            !sidePanelVisible &&
+            !searchVisible
         ) {
             Row(
                 modifier = Modifier
@@ -519,9 +568,17 @@ fun ShortsScreen(
                     favoritePending = current.id in favoritePendingIds,
                     topFocusRequester = chromeFocusRequester,
                     focusRequester = bottomActionsFocusRequester,
-                    onCommentsClick = { onOpenComments(current) },
+                    selectedAction = selectedBottomAction,
+                    onSelectedActionChange = { selectedBottomAction = it },
+                    onCommentsClick = {
+                        focusBottomActionsRequested = true
+                        onOpenComments(current)
+                    },
                     onFavoriteClick = { onToggleFavorite(current) },
-                    onAuthorClick = { onOpenAuthor(current) },
+                    onAuthorClick = {
+                        focusBottomActionsRequested = true
+                        onOpenAuthor(current)
+                    },
                     modifier = Modifier.width(infoWidth),
                 )
             }
@@ -547,18 +604,13 @@ fun ShortsScreen(
         }
 
         if (current != null) {
-            val videoWidth = if (commentsVisible) {
-                (maxWidth - commentsWidth).coerceAtLeast(1.dp)
-            } else {
-                maxWidth
-            }
             PlaybackProgressIndicator(
                 player = player,
                 videoId = current.id,
                 fallbackDurationMs = current.durationMs,
                 modifier = Modifier
                     .align(Alignment.BottomStart)
-                    .width(videoWidth),
+                    .width(videoRegionWidth),
             )
         }
 
@@ -619,13 +671,14 @@ private fun ShortVideoInfo(
     favoritePending: Boolean,
     topFocusRequester: FocusRequester,
     focusRequester: FocusRequester,
+    selectedAction: Int,
+    onSelectedActionChange: (Int) -> Unit,
     onCommentsClick: () -> Unit,
     onFavoriteClick: () -> Unit,
     onAuthorClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var actionsFocused by remember { mutableStateOf(false) }
-    var selectedAction by remember { mutableIntStateOf(0) }
     val shape = RoundedCornerShape(20.dp)
     Column(
         modifier = modifier
@@ -709,7 +762,9 @@ private fun ShortVideoInfo(
                         Key.DirectionLeft, Key.DirectionRight -> {
                             if (event.type == KeyEventType.KeyDown) {
                                 val step = if (event.key == Key.DirectionLeft) -1 else 1
-                                selectedAction = Math.floorMod(selectedAction + step, 3)
+                                onSelectedActionChange(
+                                    Math.floorMod(selectedAction + step, 3),
+                                )
                             }
                             true
                         }

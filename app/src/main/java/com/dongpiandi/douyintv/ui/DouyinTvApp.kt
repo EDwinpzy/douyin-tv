@@ -3,6 +3,8 @@ package com.dongpiandi.douyintv.ui
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.os.SystemClock
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -25,6 +27,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -48,6 +51,7 @@ import com.dongpiandi.douyintv.ui.screens.LoginScreen
 import com.dongpiandi.douyintv.ui.screens.ShortsScreen
 import com.dongpiandi.douyintv.ui.components.AuthorProfileSidebar
 import com.dongpiandi.douyintv.ui.components.MyHomeSidebar
+import com.dongpiandi.douyintv.ui.components.SearchOverlay
 import com.dongpiandi.douyintv.performance.DevicePerformanceProfile
 import com.dongpiandi.douyintv.performance.LocalDevicePerformanceProfile
 import com.dongpiandi.douyintv.ui.theme.Accent
@@ -63,6 +67,7 @@ fun DouyinTvApp(viewModel: MainViewModel) {
     val context = LocalContext.current
     val activity = context.findActivity()
     val livePlayer = state.livePlayer
+    var lastExitBackAtMs by remember { mutableLongStateOf(0L) }
     val performanceProfile = remember(context) {
         DevicePerformanceProfile.detect(context)
     }
@@ -72,6 +77,7 @@ fun DouyinTvApp(viewModel: MainViewModel) {
     ) {
         BackHandler {
             when {
+                state.search.visible -> viewModel.closeSearch()
                 state.loginVisible -> viewModel.closeLogin()
                 state.accountMenuVisible -> viewModel.closeAccountMenu()
                 state.livePlayer != null -> viewModel.closeLivePlayer()
@@ -79,7 +85,21 @@ fun DouyinTvApp(viewModel: MainViewModel) {
                 state.tab == MainTab.SHORTS && state.engagement.visible ->
                     viewModel.closeComments()
                 state.tab == MainTab.SHORTS && state.overlayVisible -> viewModel.hideOverlay()
-                else -> activity?.finish()
+                else -> {
+                    val now = SystemClock.elapsedRealtime()
+                    val shouldExit = lastExitBackAtMs > 0L &&
+                        now - lastExitBackAtMs <= EXIT_BACK_INTERVAL_MS
+                    if (shouldExit) {
+                        activity?.finish()
+                    } else {
+                        lastExitBackAtMs = now
+                        Toast.makeText(
+                            context,
+                            "再按一次返回键退出应用",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
             }
         }
 
@@ -111,6 +131,7 @@ fun DouyinTvApp(viewModel: MainViewModel) {
                     overlayVisible = state.overlayVisible,
                     sidePanelVisible =
                         state.accountMenuVisible || state.authorVideos.visible,
+                    searchVisible = state.search.visible,
                     isLoggedIn = state.isLoggedIn,
                     onSelectTab = viewModel::selectTab,
                     onAccountClick = {
@@ -123,6 +144,7 @@ fun DouyinTvApp(viewModel: MainViewModel) {
                             viewModel.openLogin()
                         }
                     },
+                    onSearchClick = viewModel::openSearch,
                     onShowOverlay = viewModel::showOverlay,
                     onHideOverlay = viewModel::hideOverlay,
                     onPrevious = viewModel::previousShort,
@@ -152,6 +174,7 @@ fun DouyinTvApp(viewModel: MainViewModel) {
                     onAccountClick = {
                         if (state.isLoggedIn) viewModel.showAccountMenu() else viewModel.openLogin()
                     },
+                    onSearchClick = viewModel::openSearch,
                     onHistoryClick = {
                         if (state.isLoggedIn) {
                             viewModel.showAccountMenu(MyHomeTab.HISTORY)
@@ -163,7 +186,7 @@ fun DouyinTvApp(viewModel: MainViewModel) {
                     onFocusRoom = viewModel::rememberLiveFocus,
                     onFocusRestored = viewModel::consumeLiveFocusRestore,
                     onRefresh = { viewModel.loadLiveRooms(reset = false) },
-                    focusEnabled = !state.accountMenuVisible,
+                    focusEnabled = !state.accountMenuVisible && !state.search.visible,
                 )
             }
         }
@@ -181,11 +204,13 @@ fun DouyinTvApp(viewModel: MainViewModel) {
                 favoritesHasMore = state.favorites.hasMore,
                 onTabSelected = viewModel::selectMyHomeTab,
                 onClose = viewModel::closeAccountMenu,
-                onRetryProfile = viewModel::retryMyProfile,
+                onRetryMyVideos = viewModel::retryMyProfile,
+                onLoadMoreMyVideos = viewModel::loadMoreMyVideos,
                 onRetryFavorites = viewModel::retryFavorites,
                 onLoadMoreFavorites = viewModel::loadMoreFavorites,
                 onPlayHistory = viewModel::playHistoryVideo,
                 onPlayFavorite = viewModel::playFavorite,
+                onPlayMyVideo = viewModel::playMyVideo,
                 onLogout = viewModel::logout,
             )
         }
@@ -203,16 +228,49 @@ fun DouyinTvApp(viewModel: MainViewModel) {
                 loadingMore = state.authorVideos.loadingMore,
                 error = state.authorVideos.error,
                 hasMore = state.authorVideos.hasMore,
+                likes = state.authorVideos.likes,
+                likesProgress = state.authorVideos.likesProgress,
+                likesLoading = state.authorVideos.likesLoading,
+                likesLoadingMore = state.authorVideos.likesLoadingMore,
+                likesError = state.authorVideos.likesError,
+                likesHasMore = state.authorVideos.likesHasMore,
+                collections = state.authorVideos.collections,
+                collectionsLoading = state.authorVideos.collectionsLoading,
+                collectionsLoadingMore = state.authorVideos.collectionsLoadingMore,
+                collectionsError = state.authorVideos.collectionsError,
+                collectionsHasMore = state.authorVideos.collectionsHasMore,
+                openingCollectionId = state.authorVideos.openingCollectionId,
                 onClose = viewModel::closeAuthorVideos,
+                onTabSelected = viewModel::selectAuthorTab,
                 onRetryProfile = viewModel::retryAuthorProfile,
                 onRetryVideos = viewModel::retryAuthorVideos,
                 onLoadMore = viewModel::loadMoreAuthorVideos,
                 onPlay = viewModel::playAuthorVideo,
+                onRetryLikes = viewModel::retryAuthorLikes,
+                onLoadMoreLikes = viewModel::loadMoreAuthorLikes,
+                onPlayLike = viewModel::playAuthorLike,
+                onRetryCollections = viewModel::retryAuthorCollections,
+                onLoadMoreCollections = viewModel::loadMoreAuthorCollections,
+                onPlayCollection = viewModel::playAuthorCollection,
             )
+            }
+
+            if (state.search.visible) {
+                SearchOverlay(
+                    state = state.search,
+                    onQueryChange = viewModel::updateSearchQuery,
+                    onSubmit = viewModel::submitSearch,
+                    onClose = viewModel::closeSearch,
+                    onRetry = viewModel::retrySearch,
+                    onLoadMore = viewModel::loadMoreSearch,
+                    onPlay = viewModel::playSearchResult,
+                )
             }
         }
     }
 }
+
+private const val EXIT_BACK_INTERVAL_MS = 2_000L
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this

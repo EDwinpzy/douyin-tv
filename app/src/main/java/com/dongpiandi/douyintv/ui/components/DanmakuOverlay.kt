@@ -40,14 +40,28 @@ internal fun scheduleDanmaku(
         .distinctBy(DanmakuMessage::id)
         .sortedWith(compareBy(DanmakuMessage::offsetMs, DanmakuMessage::id))
 
-    ordered.forEachIndexed { index, message ->
-        val laneIndex = index % laneCount
+    val laneAvailableAtMs = LongArray(laneCount)
+    ordered.forEach { message ->
+        val startMs = message.offsetMs.coerceAtLeast(0)
+        val laneIndex = lanes.indices
+            .filter { laneIndex -> laneAvailableAtMs[laneIndex] <= startMs }
+            .minByOrNull { laneIndex -> laneAvailableAtMs[laneIndex] }
+            ?: return@forEach
         lanes[laneIndex] += ScheduledDanmaku(
             message = message,
-            startMs = message.offsetMs.coerceAtLeast(0),
+            startMs = startMs,
         )
+        laneAvailableAtMs[laneIndex] = startMs + TRAVEL_DURATION_MS
     }
     return lanes
+}
+
+internal fun activeDanmaku(
+    laneMessages: List<ScheduledDanmaku>,
+    positionMs: Long,
+): List<ScheduledDanmaku> = laneMessages.filter { scheduled ->
+    positionMs >= scheduled.startMs &&
+        positionMs < scheduled.startMs + TRAVEL_DURATION_MS
 }
 
 @Composable
@@ -95,28 +109,26 @@ fun DanmakuOverlay(
         val laneHeight = size.height / lanes.size
 
         lanes.forEachIndexed { laneIndex, laneMessages ->
-            val scheduled = laneMessages.lastOrNull { item ->
-                currentPosition >= item.startMs &&
-                    currentPosition < item.startMs + TRAVEL_DURATION_MS
-            } ?: return@forEachIndexed
-            val elapsed = (currentPosition - scheduled.startMs).coerceAtLeast(0)
-            val progress = (elapsed.toFloat() / TRAVEL_DURATION_MS).coerceIn(0f, 1f)
-            val text = scheduled.message.text.replace('\n', ' ').let {
-                if (it.length > 42) it.take(41) + "…" else it
+            activeDanmaku(laneMessages, currentPosition).forEach { scheduled ->
+                val elapsed = (currentPosition - scheduled.startMs).coerceAtLeast(0)
+                val progress = (elapsed.toFloat() / TRAVEL_DURATION_MS).coerceIn(0f, 1f)
+                val text = scheduled.message.text.replace('\n', ' ').let {
+                    if (it.length > 42) it.take(41) + "…" else it
+                }
+                val textWidth = textWidthCache.getOrPut(text) {
+                    textPaint.measureText(text)
+                }
+                val travel = size.width + textWidth + horizontalPadding * 2
+                val x = size.width + horizontalPadding - progress * travel
+                val baseline = laneIndex * laneHeight + laneHeight / 2f -
+                    (textPaint.ascent() + textPaint.descent()) / 2f
+                drawContext.canvas.nativeCanvas.drawText(
+                    text,
+                    x,
+                    baseline,
+                    textPaint,
+                )
             }
-            val textWidth = textWidthCache.getOrPut(text) {
-                textPaint.measureText(text)
-            }
-            val travel = size.width + textWidth + horizontalPadding * 2
-            val x = size.width + horizontalPadding - progress * travel
-            val baseline = laneIndex * laneHeight + laneHeight / 2f -
-                (textPaint.ascent() + textPaint.descent()) / 2f
-            drawContext.canvas.nativeCanvas.drawText(
-                text,
-                x,
-                baseline,
-                textPaint,
-            )
         }
     }
 }

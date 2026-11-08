@@ -13,6 +13,7 @@ import com.dongpiandi.douyintv.model.PlaybackProgress
 import com.dongpiandi.douyintv.model.ShortComment
 import com.dongpiandi.douyintv.model.ShortVideo
 import com.dongpiandi.douyintv.model.UserProfile
+import com.dongpiandi.douyintv.model.VideoCollection
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -35,6 +36,7 @@ enum class ShortsSource {
     RECOMMEND,
     FAVORITES,
     AUTHOR,
+    SEARCH,
 }
 
 enum class MyHomeTab {
@@ -116,13 +118,52 @@ data class AuthorVideosUiState(
     val cursor: Long = 0,
     val hasMore: Boolean = false,
     val progress: Map<String, PlaybackProgress> = emptyMap(),
-    val resumeOnClose: Boolean = false,
+    val likes: List<ShortVideo> = emptyList(),
+    val likesLoading: Boolean = false,
+    val likesLoaded: Boolean = false,
+    val likesLoadingMore: Boolean = false,
+    val likesError: String? = null,
+    val likesCursor: Long = 0,
+    val likesHasMore: Boolean = false,
+    val likesProgress: Map<String, PlaybackProgress> = emptyMap(),
+    val collections: List<VideoCollection> = emptyList(),
+    val collectionsLoading: Boolean = false,
+    val collectionsLoaded: Boolean = false,
+    val collectionsLoadingMore: Boolean = false,
+    val collectionsError: String? = null,
+    val collectionsCursor: Long = 0,
+    val collectionsHasMore: Boolean = false,
+    val openingCollectionId: String? = null,
 )
 
 data class MyProfileUiState(
     val profile: UserProfile? = null,
     val loading: Boolean = false,
     val error: String? = null,
+    val videos: List<ShortVideo> = emptyList(),
+    val videosLoading: Boolean = false,
+    val videosLoadingMore: Boolean = false,
+    val videosLoaded: Boolean = false,
+    val videosError: String? = null,
+    val videosCursor: Long = 0,
+    val videosHasMore: Boolean = false,
+    val progress: Map<String, PlaybackProgress> = emptyMap(),
+)
+
+data class SearchUiState(
+    val visible: Boolean = false,
+    val query: String = "",
+    val submittedQuery: String = "",
+    val results: List<ShortVideo> = emptyList(),
+    val loading: Boolean = false,
+    val loadingMore: Boolean = false,
+    val error: String? = null,
+    val cursor: Long = 0,
+    val hasMore: Boolean = false,
+    val loaded: Boolean = false,
+    val verificationRequired: Boolean = false,
+    val searchId: String = "",
+    val backtrace: String = "",
 )
 
 private sealed interface PlaybackProgressCommand {
@@ -140,7 +181,6 @@ data class AppUiState(
     val overlayVisible: Boolean = true,
     val accountMenuVisible: Boolean = false,
     val myHomeTab: MyHomeTab = MyHomeTab.PROFILE,
-    val myHomeResumeOnClose: Boolean = false,
     val loginVisible: Boolean = false,
     val isLoggedIn: Boolean = false,
     val shorts: ShortsUiState = ShortsUiState(),
@@ -149,6 +189,7 @@ data class AppUiState(
     val history: List<PlaybackHistoryEntry> = emptyList(),
     val myProfile: MyProfileUiState = MyProfileUiState(),
     val authorVideos: AuthorVideosUiState = AuthorVideosUiState(),
+    val search: SearchUiState = SearchUiState(),
     val live: LiveListUiState = LiveListUiState(),
     val livePlayer: LivePlayerUiState? = null,
 )
@@ -160,6 +201,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val api = container.api
     private val shortsLoadMutex = Mutex()
     private var engagementJob: Job? = null
+    private var searchJob: Job? = null
     private val progressCommands = Channel<PlaybackProgressCommand>(capacity = 32)
 
     private val _state = MutableStateFlow(
@@ -201,7 +243,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 overlayVisible = false,
                 accountMenuVisible = false,
-                myHomeResumeOnClose = false,
             )
         }
     }
@@ -427,43 +468,43 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    fun playMyVideo(video: ShortVideo) {
+        playCollectionVideo(
+            video = video,
+            sourceVideos = _state.value.myProfile.videos,
+            source = ShortsSource.AUTHOR,
+        )
+    }
+
     fun openAuthorVideos(video: ShortVideo) {
         if (video.authorSecUid.isBlank()) return
         val current = _state.value
         val sameAuthor = current.authorVideos.authorSecUid == video.authorSecUid
-        val resumeOnClose = if (sameAuthor && current.authorVideos.visible) {
-            current.authorVideos.resumeOnClose
-        } else {
-            !current.shorts.paused
-        }
         _state.update {
             if (sameAuthor) {
                 it.copy(
-                    shorts = it.shorts.copy(paused = true),
                     accountMenuVisible = false,
-                    myHomeResumeOnClose = false,
                     authorVideos = it.authorVideos.copy(
                         visible = true,
                         authorName = video.authorName,
                         authorAvatarUrl = video.authorAvatarUrl,
-                        resumeOnClose = resumeOnClose,
                         progress = progressStore.load(
                             it.authorVideos.videos.map(ShortVideo::id),
+                        ),
+                        likesProgress = progressStore.load(
+                            it.authorVideos.likes.map(ShortVideo::id),
                         ),
                     ),
                 )
             } else {
                 it.copy(
-                    shorts = it.shorts.copy(paused = true),
                     accountMenuVisible = false,
-                    myHomeResumeOnClose = false,
                     authorVideos = AuthorVideosUiState(
                         visible = true,
                         authorSecUid = video.authorSecUid,
                         authorName = video.authorName,
                         authorAvatarUrl = video.authorAvatarUrl,
                         profileLoading = true,
-                        resumeOnClose = resumeOnClose,
                     ),
                 )
             }
@@ -477,15 +518,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun closeAuthorVideos() {
-        _state.update { current ->
-            val shouldResume = current.authorVideos.resumeOnClose
-            current.copy(
-                shorts = current.shorts.copy(
-                    paused = if (shouldResume) false else current.shorts.paused,
-                ),
-                authorVideos = current.authorVideos.copy(
+        _state.update {
+            it.copy(
+                overlayVisible = true,
+                authorVideos = it.authorVideos.copy(
                     visible = false,
-                    resumeOnClose = false,
                 ),
             )
         }
@@ -507,9 +544,180 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    fun selectAuthorTab(index: Int) {
+        val state = _state.value.authorVideos
+        when (index) {
+            1 -> if (!state.collectionsLoaded && !state.collectionsLoading) {
+                loadAuthorCollectionsPage(reset = true)
+            }
+
+            2 -> if (!state.likesLoaded && !state.likesLoading) {
+                loadAuthorLikes(reset = true)
+            }
+        }
+    }
+
+    fun retryAuthorLikes() {
+        loadAuthorLikes(reset = true)
+    }
+
+    fun loadMoreAuthorLikes() {
+        loadAuthorLikes(reset = false)
+    }
+
+    fun playAuthorLike(video: ShortVideo) {
+        playCollectionVideo(
+            video = video,
+            sourceVideos = _state.value.authorVideos.likes,
+            source = ShortsSource.AUTHOR,
+        )
+    }
+
+    fun retryAuthorCollections() {
+        loadAuthorCollectionsPage(reset = true)
+    }
+
+    fun loadMoreAuthorCollections() {
+        loadAuthorCollectionsPage(reset = false)
+    }
+
+    fun playAuthorCollection(collection: VideoCollection) {
+        val state = _state.value.authorVideos
+        val authorSecUid = state.authorSecUid
+        if (authorSecUid.isBlank() || state.openingCollectionId != null) return
+        _state.update {
+            it.copy(
+                authorVideos = it.authorVideos.copy(
+                    openingCollectionId = collection.id,
+                    collectionsError = null,
+                ),
+            )
+        }
+        viewModelScope.launch {
+            runCatching {
+                api.loadCollectionVideos(mixId = collection.id, cursor = 0)
+            }
+                .onSuccess { page ->
+                    val firstVideo = page.videos.firstOrNull()
+                    _state.update { current ->
+                        if (current.authorVideos.authorSecUid != authorSecUid) {
+                            current
+                        } else {
+                            current.copy(
+                                authorVideos = current.authorVideos.copy(
+                                    openingCollectionId = null,
+                                    collectionsError = if (firstVideo == null) {
+                                        "该合集还没有可播放视频"
+                                    } else {
+                                        null
+                                    },
+                                ),
+                            )
+                        }
+                    }
+                    if (firstVideo != null && _state.value.authorVideos.authorSecUid == authorSecUid) {
+                        playCollectionVideo(
+                            video = firstVideo,
+                            sourceVideos = page.videos,
+                            source = ShortsSource.AUTHOR,
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    _state.update { current ->
+                        if (current.authorVideos.authorSecUid != authorSecUid) {
+                            current
+                        } else {
+                            current.copy(
+                                authorVideos = current.authorVideos.copy(
+                                    openingCollectionId = null,
+                                    collectionsError = error.toDisplayMessage("合集打开失败"),
+                                ),
+                            )
+                        }
+                    }
+                }
+        }
+    }
+
     fun retryAuthorProfile() {
         val authorSecUid = _state.value.authorVideos.authorSecUid
         if (authorSecUid.isNotBlank()) loadAuthorProfile(authorSecUid)
+    }
+
+    fun openSearch() {
+        _state.update {
+            it.copy(
+                overlayVisible = false,
+                accountMenuVisible = false,
+                authorVideos = it.authorVideos.copy(visible = false),
+                search = it.search.copy(visible = true, error = null),
+            )
+        }
+    }
+
+    fun closeSearch() {
+        _state.update {
+            it.copy(search = it.search.copy(visible = false))
+        }
+    }
+
+    fun updateSearchQuery(query: String) {
+        _state.update {
+            it.copy(search = it.search.copy(query = query.take(80), error = null))
+        }
+    }
+
+    fun submitSearch() {
+        val query = _state.value.search.query.trim()
+        if (query.isBlank()) {
+            _state.update {
+                it.copy(search = it.search.copy(error = "请输入搜索关键词"))
+            }
+            return
+        }
+        searchJob?.cancel()
+        _state.update {
+            it.copy(
+                search = it.search.copy(
+                    query = query,
+                    submittedQuery = query,
+                    results = emptyList(),
+                    loading = false,
+                    loadingMore = false,
+                    error = null,
+                    cursor = 0,
+                    hasMore = false,
+                    loaded = false,
+                    verificationRequired = false,
+                    searchId = "",
+                    backtrace = "",
+                ),
+            )
+        }
+        loadSearchPage(reset = true)
+    }
+
+    fun retrySearch() {
+        val query = _state.value.search.submittedQuery
+        if (query.isNotBlank()) {
+            _state.update {
+                it.copy(search = it.search.copy(loading = false, error = null))
+            }
+            loadSearchPage(reset = true)
+        }
+    }
+
+    fun loadMoreSearch() {
+        loadSearchPage(reset = false)
+    }
+
+    fun playSearchResult(video: ShortVideo) {
+        playCollectionVideo(
+            video = video,
+            sourceVideos = _state.value.search.results,
+            source = ShortsSource.SEARCH,
+        )
     }
 
     fun recordPlaybackProgress(
@@ -755,23 +963,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             openLogin()
             return
         }
-        val resumeOnClose = if (current.accountMenuVisible) {
-            current.myHomeResumeOnClose
-        } else {
-            !current.shorts.paused
-        }
         _state.update {
             it.copy(
                 overlayVisible = true,
                 accountMenuVisible = true,
                 myHomeTab = tab,
-                myHomeResumeOnClose = resumeOnClose,
-                shorts = it.shorts.copy(paused = true),
                 history = progressStore.history(),
                 favorites = it.favorites.copy(
                     progress = progressStore.load(it.favorites.videos.map(ShortVideo::id)),
                 ),
-                authorVideos = it.authorVideos.copy(visible = false, resumeOnClose = false),
+                authorVideos = it.authorVideos.copy(visible = false),
             )
         }
         if (tab == MyHomeTab.FAVORITES && !_state.value.favorites.loaded) {
@@ -784,13 +985,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun closeAccountMenu() {
         _state.update {
-            val shouldResume = it.myHomeResumeOnClose
             it.copy(
+                overlayVisible = false,
                 accountMenuVisible = false,
-                myHomeResumeOnClose = false,
-                shorts = it.shorts.copy(
-                    paused = if (shouldResume) false else it.shorts.paused,
-                ),
             )
         }
     }
@@ -821,7 +1018,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun retryMyProfile() {
-        loadSelfProfile(force = true)
+        val profile = _state.value.myProfile
+        val secUid = profile.profile?.secUid.orEmpty()
+        if (secUid.isBlank()) {
+            loadSelfProfile(force = true)
+        } else {
+            loadSelfVideos(secUid = secUid, reset = true)
+        }
+    }
+
+    fun loadMoreMyVideos() {
+        val secUid = _state.value.myProfile.profile?.secUid.orEmpty()
+        if (secUid.isNotBlank()) {
+            loadSelfVideos(secUid = secUid, reset = false)
+        }
     }
 
     fun logout() {
@@ -833,11 +1043,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 isLoggedIn = false,
                 accountMenuVisible = false,
-                myHomeResumeOnClose = false,
                 loginVisible = false,
                 favorites = FavoritesUiState(),
                 myProfile = MyProfileUiState(),
                 authorVideos = AuthorVideosUiState(),
+                search = SearchUiState(),
             )
         }
     }
@@ -897,7 +1107,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val current = _state.value
         if (!current.isLoggedIn) return
         val profile = current.myProfile
-        if (!force && (profile.loading || profile.profile != null)) return
+        if (profile.loading) return
+        if (!force && profile.profile != null) {
+            val secUid = profile.profile.secUid
+            if (
+                secUid.isNotBlank() &&
+                !profile.videosLoaded &&
+                !profile.videosLoading &&
+                !profile.videosLoadingMore
+            ) {
+                loadSelfVideos(secUid = secUid, reset = true)
+            }
+            return
+        }
         _state.update {
             it.copy(
                 myProfile = it.myProfile.copy(
@@ -911,8 +1133,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 .onSuccess { result ->
                     _state.update {
                         it.copy(
-                            myProfile = MyProfileUiState(profile = result),
+                            myProfile = it.myProfile.copy(
+                                profile = result,
+                                loading = false,
+                                error = null,
+                            ),
                         )
+                    }
+                    if (result.secUid.isNotBlank()) {
+                        loadSelfVideos(secUid = result.secUid, reset = true)
+                    } else {
+                        _state.update {
+                            it.copy(
+                                myProfile = it.myProfile.copy(
+                                    videosError = "无法获取账号作品",
+                                ),
+                            )
+                        }
                     }
                 }
                 .onFailure { error ->
@@ -923,6 +1160,70 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 error = error.toDisplayMessage("账号资料加载失败"),
                             ),
                         )
+                    }
+                }
+        }
+    }
+
+    private fun loadSelfVideos(
+        secUid: String,
+        reset: Boolean,
+    ) {
+        val snapshot = _state.value.myProfile
+        if (snapshot.profile?.secUid != secUid) return
+        if (snapshot.videosLoading || snapshot.videosLoadingMore) return
+        if (!reset && !snapshot.videosHasMore) return
+        val cursor = if (reset) 0L else snapshot.videosCursor
+        _state.update {
+            it.copy(
+                myProfile = it.myProfile.copy(
+                    videosLoading = reset,
+                    videosLoadingMore = !reset,
+                    videosError = null,
+                    videos = if (reset) emptyList() else it.myProfile.videos,
+                ),
+            )
+        }
+        viewModelScope.launch {
+            runCatching {
+                api.loadAuthorVideos(authorSecUid = secUid, cursor = cursor)
+            }
+                .onSuccess { page ->
+                    _state.update { state ->
+                        if (state.myProfile.profile?.secUid != secUid) {
+                            state
+                        } else {
+                            val existing = if (reset) emptyList() else state.myProfile.videos
+                            val merged = (existing + page.videos)
+                                .distinctBy(ShortVideo::id)
+                            state.copy(
+                                myProfile = state.myProfile.copy(
+                                    videos = merged,
+                                    videosLoading = false,
+                                    videosLoadingMore = false,
+                                    videosLoaded = true,
+                                    videosError = null,
+                                    videosCursor = page.cursor,
+                                    videosHasMore = page.hasMore,
+                                    progress = progressStore.load(merged.map(ShortVideo::id)),
+                                ),
+                            )
+                        }
+                    }
+                }
+                .onFailure { error ->
+                    _state.update { state ->
+                        if (state.myProfile.profile?.secUid != secUid) {
+                            state
+                        } else {
+                            state.copy(
+                                myProfile = state.myProfile.copy(
+                                    videosLoading = false,
+                                    videosLoadingMore = false,
+                                    videosError = error.toDisplayMessage("我的作品加载失败"),
+                                ),
+                            )
+                        }
                     }
                 }
         }
@@ -1041,6 +1342,209 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun loadAuthorLikes(reset: Boolean) {
+        val snapshot = _state.value.authorVideos
+        val authorSecUid = snapshot.authorSecUid
+        if (authorSecUid.isBlank()) return
+        if (snapshot.likesLoading || snapshot.likesLoadingMore) return
+        if (!reset && !snapshot.likesHasMore) return
+        val cursor = if (reset) 0L else snapshot.likesCursor
+        _state.update {
+            it.copy(
+                authorVideos = it.authorVideos.copy(
+                    likesLoading = reset,
+                    likesLoadingMore = !reset,
+                    likesError = null,
+                    likes = if (reset) emptyList() else it.authorVideos.likes,
+                ),
+            )
+        }
+        viewModelScope.launch {
+            runCatching {
+                api.loadAuthorLikedVideos(authorSecUid = authorSecUid, cursor = cursor)
+            }
+                .onSuccess { page ->
+                    _state.update { state ->
+                        if (state.authorVideos.authorSecUid != authorSecUid) {
+                            state
+                        } else {
+                            val existing = if (reset) emptyList() else state.authorVideos.likes
+                            val merged = (existing + page.videos)
+                                .distinctBy(ShortVideo::id)
+                            state.copy(
+                                authorVideos = state.authorVideos.copy(
+                                    likes = merged,
+                                    likesLoading = false,
+                                    likesLoaded = true,
+                                    likesLoadingMore = false,
+                                    likesError = null,
+                                    likesCursor = page.cursor,
+                                    likesHasMore = page.hasMore,
+                                    likesProgress = progressStore.load(
+                                        merged.map(ShortVideo::id),
+                                    ),
+                                ),
+                            )
+                        }
+                    }
+                }
+                .onFailure { error ->
+                    _state.update { state ->
+                        if (state.authorVideos.authorSecUid != authorSecUid) {
+                            state
+                        } else {
+                            state.copy(
+                                authorVideos = state.authorVideos.copy(
+                                    likesLoading = false,
+                                    likesLoadingMore = false,
+                                    likesError = error.toDisplayMessage("博主喜欢列表加载失败"),
+                                ),
+                            )
+                        }
+                    }
+                }
+        }
+    }
+
+    private fun loadAuthorCollectionsPage(reset: Boolean) {
+        val snapshot = _state.value.authorVideos
+        val authorSecUid = snapshot.authorSecUid
+        if (authorSecUid.isBlank()) return
+        if (snapshot.collectionsLoading || snapshot.collectionsLoadingMore) return
+        if (!reset && !snapshot.collectionsHasMore) return
+        val cursor = if (reset) 0L else snapshot.collectionsCursor
+        _state.update {
+            it.copy(
+                authorVideos = it.authorVideos.copy(
+                    collectionsLoading = reset,
+                    collectionsLoadingMore = !reset,
+                    collectionsError = null,
+                    collections = if (reset) emptyList() else it.authorVideos.collections,
+                ),
+            )
+        }
+        viewModelScope.launch {
+            runCatching {
+                api.loadAuthorCollections(authorSecUid = authorSecUid, cursor = cursor)
+            }
+                .onSuccess { page ->
+                    _state.update { state ->
+                        if (state.authorVideos.authorSecUid != authorSecUid) {
+                            state
+                        } else {
+                            val existing = if (reset) {
+                                emptyList()
+                            } else {
+                                state.authorVideos.collections
+                            }
+                            val merged = (existing + page.collections)
+                                .distinctBy(VideoCollection::id)
+                            state.copy(
+                                authorVideos = state.authorVideos.copy(
+                                    collections = merged,
+                                    collectionsLoading = false,
+                                    collectionsLoaded = true,
+                                    collectionsLoadingMore = false,
+                                    collectionsError = null,
+                                    collectionsCursor = page.cursor,
+                                    collectionsHasMore = page.hasMore,
+                                ),
+                            )
+                        }
+                    }
+                }
+                .onFailure { error ->
+                    _state.update { state ->
+                        if (state.authorVideos.authorSecUid != authorSecUid) {
+                            state
+                        } else {
+                            state.copy(
+                                authorVideos = state.authorVideos.copy(
+                                    collectionsLoading = false,
+                                    collectionsLoadingMore = false,
+                                    collectionsError = error.toDisplayMessage("博主合集加载失败"),
+                                ),
+                            )
+                        }
+                    }
+                }
+        }
+    }
+
+    private fun loadSearchPage(reset: Boolean) {
+        val snapshot = _state.value.search
+        val query = snapshot.submittedQuery.trim()
+        if (query.isBlank()) return
+        if (snapshot.loading || snapshot.loadingMore) return
+        if (!reset && (!snapshot.loaded || !snapshot.hasMore)) return
+        val cursor = if (reset) 0L else snapshot.cursor
+        val searchId = if (reset) "" else snapshot.searchId
+        val backtrace = if (reset) "" else snapshot.backtrace
+        _state.update {
+            it.copy(
+                search = it.search.copy(
+                    loading = reset,
+                    loadingMore = !reset,
+                    error = null,
+                    results = if (reset) emptyList() else it.search.results,
+                    verificationRequired =
+                        if (reset) false else it.search.verificationRequired,
+                ),
+            )
+        }
+        searchJob = viewModelScope.launch {
+            runCatching {
+                api.searchVideos(
+                    keyword = query,
+                    cursor = cursor,
+                    searchId = searchId,
+                    backtrace = backtrace,
+                )
+            }
+                .onSuccess { page ->
+                    _state.update { state ->
+                        if (state.search.submittedQuery != query) {
+                            state
+                        } else {
+                            val existing = if (reset) emptyList() else state.search.results
+                            val merged = (existing + page.videos)
+                                .distinctBy(ShortVideo::id)
+                            state.copy(
+                                search = state.search.copy(
+                                    results = merged,
+                                    loading = false,
+                                    loadingMore = false,
+                                    loaded = true,
+                                    error = null,
+                                    verificationRequired = page.verificationRequired,
+                                    cursor = page.cursor,
+                                    hasMore = page.hasMore,
+                                    searchId = page.searchId,
+                                    backtrace = page.backtrace,
+                                ),
+                            )
+                        }
+                    }
+                }
+                .onFailure { error ->
+                    _state.update { state ->
+                        if (state.search.submittedQuery != query) {
+                            state
+                        } else {
+                            state.copy(
+                                search = state.search.copy(
+                                    loading = false,
+                                    loadingMore = false,
+                                    verificationRequired = false,
+                                    error = error.toDisplayMessage("搜索失败"),
+                                ),
+                            )
+                        }
+                    }
+                }
+        }
+    }
+
     private fun playCollectionVideo(
         video: ShortVideo,
         sourceVideos: List<ShortVideo>,
@@ -1054,8 +1558,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 overlayVisible = false,
                 engagement = EngagementUiState(),
                 accountMenuVisible = false,
-                myHomeResumeOnClose = false,
-                authorVideos = it.authorVideos.copy(visible = false, resumeOnClose = false),
+                authorVideos = it.authorVideos.copy(visible = false),
+                search = it.search.copy(visible = false),
                 shorts = it.shorts.copy(
                     videos = ordered,
                     index = index,

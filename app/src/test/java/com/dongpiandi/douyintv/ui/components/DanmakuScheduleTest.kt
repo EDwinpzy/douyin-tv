@@ -18,16 +18,16 @@ class DanmakuScheduleTest {
         val lanes = scheduleDanmaku(messages)
 
         assertEquals(3, lanes.size)
-        assertEquals(messages.size, lanes.sumOf { it.size })
+        assertEquals(3, lanes.sumOf { lane -> lane.size })
     }
 
     @Test
-    fun preservesEveryOriginalTimestamp() {
+    fun preservesOriginalTimestampsForScheduledMessages() {
         val messages = List(12) { index ->
             DanmakuMessage(
                 id = "danmaku-$index",
                 text = "第 $index 条弹幕",
-                offsetMs = index * 250L,
+                offsetMs = index * 20_000L,
             )
         }
 
@@ -46,7 +46,7 @@ class DanmakuScheduleTest {
     }
 
     @Test
-    fun spreadsSameTimeMessagesAcrossLanesWithoutShiftingThem() {
+    fun spreadsNearbyMessagesAcrossLanesAndSkipsWhenAllLanesAreBusy() {
         val messages = listOf(
             DanmakuMessage("one", "第一条", 2_000L),
             DanmakuMessage("two", "第二条", 2_100L),
@@ -59,12 +59,32 @@ class DanmakuScheduleTest {
             laneCount = 3,
         )
 
-        assertEquals(messages.size, scheduled.sumOf { it.size })
+        assertEquals(3, scheduled.sumOf { it.size })
         assertEquals(
-            messages.map(DanmakuMessage::offsetMs),
+            messages.take(3).map(DanmakuMessage::offsetMs),
             scheduled.flatten()
                 .sortedBy { item -> item.message.offsetMs }
                 .map { item -> item.startMs },
         )
+    }
+
+    @Test
+    fun keepsALaneOccupiedUntilItsMessageFinishesScrolling() {
+        val messages = listOf(
+            DanmakuMessage("first", "第一条", 1_000L),
+            DanmakuMessage("second", "第二条", 1_500L),
+            DanmakuMessage("third", "第三条", 19_000L),
+        )
+
+        val lanes = scheduleDanmaku(
+            messages = messages,
+            laneCount = 1,
+        )
+
+        assertEquals(2, lanes.single().size)
+        assertEquals("first", lanes.single()[0].message.id)
+        assertEquals("third", lanes.single()[1].message.id)
+        assertEquals("first", activeDanmaku(lanes.single(), 1_500L).single().message.id)
+        assertEquals("third", activeDanmaku(lanes.single(), 19_500L).single().message.id)
     }
 }

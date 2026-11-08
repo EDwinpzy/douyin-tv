@@ -89,6 +89,7 @@ fun LiveGridScreen(
     isLoggedIn: Boolean,
     onSelectTab: (MainTab) -> Unit,
     onAccountClick: () -> Unit,
+    onSearchClick: () -> Unit,
     onHistoryClick: () -> Unit,
     onOpenRoom: (LiveRoom) -> Unit,
     onFocusRoom: (String) -> Unit,
@@ -137,6 +138,7 @@ fun LiveGridScreen(
             isLoggedIn = isLoggedIn,
             onSelectTab = onSelectTab,
             onAccountClick = onAccountClick,
+            onSearchClick = onSearchClick,
             focusEnabled = focusEnabled,
         )
         Row(
