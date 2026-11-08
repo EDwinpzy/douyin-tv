@@ -350,13 +350,18 @@ fun ShortsScreen(
         val infoWidth = (maxWidth * 0.28f).coerceAtMost(280.dp)
         val danmakuHeight = (maxHeight * DANMAKU_HEIGHT_FRACTION)
             .coerceAtLeast(72.dp)
-        val commentsWidth = commentsPanelWidth(maxWidth)
-        val videoRegionWidth = if (commentsVisible) {
-            (maxWidth - commentsWidth).coerceAtLeast(1.dp)
+        val rightPanelWidth = when {
+            commentsVisible -> commentsPanelWidth(maxWidth)
+            sidePanelVisible -> maxWidth * (1f / 3f)
+            else -> 0.dp
+        }
+        val hasRightPanel = commentsVisible || sidePanelVisible
+        val videoRegionWidth = if (hasRightPanel) {
+            (maxWidth - rightPanelWidth).coerceAtLeast(1.dp)
         } else {
             maxWidth
         }
-        val videoRegionModifier = if (commentsVisible) {
+        val videoRegionModifier = if (hasRightPanel) {
             Modifier
                 .fillMaxHeight()
                 .width(videoRegionWidth)
@@ -470,16 +475,16 @@ fun ShortsScreen(
 
         if (
             current != null &&
-            !commentsVisible &&
-            !sidePanelVisible
+            !commentsVisible
         ) {
             DanmakuOverlay(
                 messages = engagement.danmaku,
                 player = player,
                 refreshIntervalMs = performanceProfile.danmakuFrameIntervalMs,
-                animating = !overlayVisible,
+                animating = true,
                 modifier = Modifier
-                    .align(Alignment.TopCenter)
+                    .align(Alignment.TopStart)
+                    .width(videoRegionWidth)
                     .height(danmakuHeight),
             )
         }
@@ -547,18 +552,13 @@ fun ShortsScreen(
         }
 
         if (current != null) {
-            val videoWidth = if (commentsVisible) {
-                (maxWidth - commentsWidth).coerceAtLeast(1.dp)
-            } else {
-                maxWidth
-            }
             PlaybackProgressIndicator(
                 player = player,
                 videoId = current.id,
                 fallbackDurationMs = current.durationMs,
                 modifier = Modifier
                     .align(Alignment.BottomStart)
-                    .width(videoWidth),
+                    .width(videoRegionWidth),
             )
         }
 

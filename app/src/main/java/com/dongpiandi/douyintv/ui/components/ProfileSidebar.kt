@@ -106,11 +106,13 @@ fun MyHomeSidebar(
     favoritesHasMore: Boolean,
     onTabSelected: (MyHomeTab) -> Unit,
     onClose: () -> Unit,
-    onRetryProfile: () -> Unit,
+    onRetryMyVideos: () -> Unit,
+    onLoadMoreMyVideos: () -> Unit,
     onRetryFavorites: () -> Unit,
     onLoadMoreFavorites: () -> Unit,
     onPlayHistory: (ShortVideo) -> Unit,
     onPlayFavorite: (ShortVideo) -> Unit,
+    onPlayMyVideo: (ShortVideo) -> Unit,
     onLogout: () -> Unit,
 ) {
     val tabs = MyHomeTab.entries
@@ -173,7 +175,9 @@ fun MyHomeSidebar(
 
             MyHomeTab.PROFILE -> MyProfileContent(
                 profile = profile,
-                onRetry = onRetryProfile,
+                onRetry = onRetryMyVideos,
+                onLoadMore = onLoadMoreMyVideos,
+                onPlay = onPlayMyVideo,
             )
         }
     }
@@ -795,49 +799,25 @@ private fun SidebarVideoCard(
 private fun MyProfileContent(
     profile: MyProfileUiState,
     onRetry: () -> Unit,
+    onLoadMore: () -> Unit,
+    onPlay: (ShortVideo) -> Unit,
 ) {
-    val retryFocusRequester = remember { FocusRequester() }
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        if (profile.loading) {
-            item(key = "profile-loading") {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 6.dp),
-                    horizontalArrangement = Arrangement.Center,
-                ) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
-                        color = Accent,
-                        strokeWidth = 2.dp,
-                    )
-                }
-            }
-        }
-        if (profile.error != null) {
-            item(key = "profile-error") {
-                Column {
-                    Text(
-                        text = profile.error,
-                        color = Accent,
-                        style = MaterialTheme.typography.bodyMedium.copy(
-                            fontSize = 11.sp,
-                            lineHeight = 14.sp,
-                        ),
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    SidebarPillButton(
-                        label = "重新加载",
-                        focusRequester = retryFocusRequester,
-                        onClick = onRetry,
-                    )
-                }
-            }
-        }
-    }
+    SidebarVideoList(
+        videos = profile.videos,
+        progressByVideoId = profile.progress,
+        loading = profile.loading || profile.videosLoading,
+        loadingMore = profile.videosLoadingMore,
+        error = profile.videosError ?: profile.error,
+        hasMore = profile.videosHasMore,
+        emptyText = if (profile.profile == null) {
+            "账号资料暂未加载"
+        } else {
+            "还没有发布视频"
+        },
+        onRetry = onRetry,
+        onLoadMore = onLoadMore,
+        onPlay = onPlay,
+    )
 }
 
 @Composable

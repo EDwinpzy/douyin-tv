@@ -39,6 +39,7 @@ data class UserProfileResponse(
 data class UserProfileDto(
     val nickname: String = "",
     val unique_id: String = "",
+    val sec_uid: String = "",
     val short_id: String = "",
     val avatar_thumb: UrlListDto? = null,
     val follower_count: Long = 0,

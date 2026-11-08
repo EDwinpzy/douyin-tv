@@ -513,6 +513,7 @@ class DouyinApi(
     private fun mapUserProfile(dto: UserProfileDto): UserProfile = UserProfile(
         nickname = dto.nickname.trim().ifBlank { "抖音用户" },
         uniqueId = dto.unique_id.trim().ifBlank { dto.short_id.trim() },
+        secUid = dto.sec_uid.trim(),
         avatarUrl = dto.avatar_thumb?.url_list?.firstOrNull()?.let(::forceHttps),
         followerCount = dto.follower_count,
         followingCount = dto.following_count,

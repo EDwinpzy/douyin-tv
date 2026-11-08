@@ -3,6 +3,8 @@ package com.dongpiandi.douyintv.ui
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.os.SystemClock
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -25,6 +27,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -63,6 +66,7 @@ fun DouyinTvApp(viewModel: MainViewModel) {
     val context = LocalContext.current
     val activity = context.findActivity()
     val livePlayer = state.livePlayer
+    var lastExitBackAtMs by remember { mutableLongStateOf(0L) }
     val performanceProfile = remember(context) {
         DevicePerformanceProfile.detect(context)
     }
@@ -79,7 +83,21 @@ fun DouyinTvApp(viewModel: MainViewModel) {
                 state.tab == MainTab.SHORTS && state.engagement.visible ->
                     viewModel.closeComments()
                 state.tab == MainTab.SHORTS && state.overlayVisible -> viewModel.hideOverlay()
-                else -> activity?.finish()
+                else -> {
+                    val now = SystemClock.elapsedRealtime()
+                    val shouldExit = lastExitBackAtMs > 0L &&
+                        now - lastExitBackAtMs <= EXIT_BACK_INTERVAL_MS
+                    if (shouldExit) {
+                        activity?.finish()
+                    } else {
+                        lastExitBackAtMs = now
+                        Toast.makeText(
+                            context,
+                            "再按一次返回键退出应用",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
             }
         }
 
@@ -181,11 +199,13 @@ fun DouyinTvApp(viewModel: MainViewModel) {
                 favoritesHasMore = state.favorites.hasMore,
                 onTabSelected = viewModel::selectMyHomeTab,
                 onClose = viewModel::closeAccountMenu,
-                onRetryProfile = viewModel::retryMyProfile,
+                onRetryMyVideos = viewModel::retryMyProfile,
+                onLoadMoreMyVideos = viewModel::loadMoreMyVideos,
                 onRetryFavorites = viewModel::retryFavorites,
                 onLoadMoreFavorites = viewModel::loadMoreFavorites,
                 onPlayHistory = viewModel::playHistoryVideo,
                 onPlayFavorite = viewModel::playFavorite,
+                onPlayMyVideo = viewModel::playMyVideo,
                 onLogout = viewModel::logout,
             )
         }
@@ -213,6 +233,8 @@ fun DouyinTvApp(viewModel: MainViewModel) {
         }
     }
 }
+
+private const val EXIT_BACK_INTERVAL_MS = 2_000L
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this

@@ -54,6 +54,7 @@ data class VideoPage(
 data class UserProfile(
     val nickname: String,
     val uniqueId: String,
+    val secUid: String,
     val avatarUrl: String?,
     val followerCount: Long,
     val followingCount: Long,
