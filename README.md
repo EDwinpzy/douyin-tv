@@ -41,6 +41,10 @@
 - 搜索：推荐页和直播页顶栏均可打开搜索层，使用 TV 系统软键盘输入关键词，结果支持
   分页和直接播放。抖音当前对第三方搜索请求返回 `verify_check` 安全校验时，界面会
   明确显示平台限制，不会把拦截误报成“没有找到视频”。
+- 语音控制：全局语音助手可通过受 UID 白名单保护的 ContentProvider 提交搜索、播放
+  首条结果、暂停/继续、上一条/下一条、打开评论、收藏/取消收藏和打开作者主页命令。
+  “播放/查看”会等搜索结果加载后直接进入首条视频；“搜索/查找”停留在结果页。平台返回
+  安全校验时停在搜索页并显示提示，不绕过校验，也不伪报已播放。
 - TV 交互：全局 D-pad 焦点、分层 Back、全屏横屏和播放时保持亮屏。
 
 短视频和直播均由原生 ExoPlayer 播放，不存在把完整抖音网页放进 WebView 的套壳
@@ -125,6 +129,24 @@ $env:DOUYINTV_KEYSTORE_PROPERTIES = "$env:USERPROFILE\.android\douyintv-release\
 Release 包与 Debug 包签名不同，无法直接覆盖安装；升级需先卸载旧版，登录会话
 需要重新扫码获取。
 
+## 语音命令契约
+
+语音助手必须先打开 `.voice.VoiceEntryActivity`，再通过 ContentProvider 提交命令：
+
+- Authority：`com.dongpiandi.douyintv.voice.commands`
+- Method：`dispatch`
+- Extras：`operation`、`query`、`openFirstResult`
+- 返回 Extras：`accepted`
+
+Provider 只在调用 UID 属于 `com.dongpiandi.voicehelper` 时接受命令。命令进入进程内
+队列，`MainActivity` 在前台消费；应用从后台被拉起时，`VoiceEntryActivity` 先打开
+主界面，再由 Provider 入队。命令超过 30 秒未消费会丢弃，避免过期搜索在下次打开时
+误执行。
+
+`operation` 支持 `search`、`play`、`pause`、`next`、`previous`、`comment`、`favorite`、
+`unfavorite`、`author`。只有 `search` 读取 `query` 与 `openFirstResult`；其余操作
+作用于当前短视频。该桥接不要求 Helper 和抖音使用同一张签名证书。
+
 ## 原生边界
 
 - **界面**：Jetpack Compose，按电视横屏设计，无手机触摸布局。
@@ -199,7 +221,8 @@ douyinTV/
 | 真实手机扫码与登录完成 | NOT_RUN | 本次未重新执行扫码、Cookie 持久化、退出登录全流程 |
 | 实体遥控器与 OEM 长按 | NOT_RUN | S621 使用 ADB 按键注入，不等于硬件遥控器证据 |
 | 投影仪本轮复测 | NOT_RUN | 按用户要求本轮只做电脑模拟器验证，未连接投影仪 |
-| Release 签名与生产包 | PASS | `0.3.0 (versionCode 4)` 使用仓库外专用 keystore 签名，apksigner 校验 v2/v3 通过；Release APK 与 AAB 均产出 |
+| Release 签名与生产包 | PASS | `0.3.1 (versionCode 5)` 使用仓库外专用 keystore 签名，apksigner 校验通过；Release APK 覆盖安装成功 |
+| 语音命令桥 | PASS | S621 上后台“在抖音播放三国演义”打开搜索页；平台安全校验正常显示；暂停/继续、下一条/上一条、评论、收藏和作者主页均经真机验证 |
 | 长时间播放、弱网、并发切换 | NOT_RUN | 尚无持续运行与网络扰动测试 |
 
 ## 已知限制

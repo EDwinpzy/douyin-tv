@@ -155,6 +155,20 @@ MainActivity
    `verify_check`。客户端识别该字段并显示平台安全校验提示，不把拦截误判为无结果。
 4. 搜索不通过 WebView 或网页套壳绕过校验。
 
+## 语音命令链路
+
+1. 方舟/全局语音助手先打开 `.voice.VoiceEntryActivity`，再由
+   `content://com.dongpiandi.douyintv.voice.commands` 调用 `dispatch`。
+2. `VoiceCommandProvider` 用 `Binder.getCallingUid()` 对应的包名做白名单校验，只接受
+   `com.dongpiandi.voicehelper`（或抖音自身）。命令随后进入带时间戳的进程内队列。
+3. 抖音已在前台时只提交队列，不启动新 Activity；后台时由入口页拉起主界面，主界面
+   在 `STARTED` 生命周期消费队列。超过 30 秒的队列项丢弃。
+4. 搜索命令与界面手动搜索共用 `MainViewModel.submitSearch()`。`openFirstResult=true`
+   时只在搜索结果成功、非安全校验且首条存在时调用 `playSearchResult()`；否则保留
+   搜索页或校验提示。
+5. 暂停、继续、上一条、下一条、评论、收藏和作者主页直接调用 `MainViewModel` 的既有
+   状态方法，不使用延迟 D-pad 或无障碍点击。
+
 ## 登录与会话
 
 - 登录地址为 `https://www.douyin.com/user/self`，使用桌面 UA。
