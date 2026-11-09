@@ -97,8 +97,27 @@ adb install -r .\app\build\outputs\apk\debug\app-debug.apk
 adb shell am start -n com.dongpiandi.douyintv/.MainActivity
 ```
 
-当前只配置 Debug 构建，没有 Release 签名。仓库与 README 均不提供生产 APK；
-未经重新签名和完整验证，不应把 Debug 包用于公开分发。
+## 发布
+
+Release 构建使用仓库外的专用签名材料，签名文件和密钥库都不入库：
+
+```powershell
+$env:DOUYINTV_KEYSTORE_PROPERTIES = "$env:USERPROFILE\.android\douyintv-release\keystore.properties"
+.\gradlew.bat :app:assembleRelease :app:bundleRelease
+```
+
+`keystore.properties` 需要包含 `storeFile`、`storePassword`、`keyAlias`、`keyPassword`
+四项；构建脚本也会依次读取仓库根目录的 `keystore.properties` 和 `local.properties`。
+缺少这些文件时 release 构建会退回 debug 签名，因此正式发布前必须用
+`apksigner verify --print-certs` 确认签名证书。
+
+产物：
+
+- `app\build\outputs\apk\release\app-release.apk`：直接安装的 APK。
+- `app\build\outputs\bundle\release\app-release.aab`：应用商店上传包。
+
+Release 包与 Debug 包签名不同，无法直接覆盖安装；升级需先卸载旧版，登录会话
+需要重新扫码获取。
 
 ## 原生边界
 
@@ -170,7 +189,7 @@ douyinTV/
 | 真实手机扫码与登录完成 | NOT_RUN | 本次未重新执行扫码、Cookie 持久化、退出登录全流程 |
 | 实体遥控器与 OEM 长按 | NOT_RUN | S621 使用 ADB 按键注入，不等于硬件遥控器证据 |
 | 投影仪本轮复测 | NOT_RUN | 按用户要求本轮只做电脑模拟器验证，未连接投影仪 |
-| Release 签名与生产包 | NOT_RUN | 未配置签名，只有 Debug 构建 |
+| Release 签名与生产包 | PASS | `0.2.0 (versionCode 2)` 使用仓库外专用 keystore 签名，apksigner 校验 v2/v3 通过；Release APK 与 AAB 均产出 |
 | 长时间播放、弱网、并发切换 | NOT_RUN | 尚无持续运行与网络扰动测试 |
 
 ## 已知限制

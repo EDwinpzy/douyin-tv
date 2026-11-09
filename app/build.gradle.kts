@@ -1,9 +1,14 @@
+import java.io.File
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
 }
+
+val releaseSigning = signingProperties()
 
 android {
     namespace = "com.dongpiandi.douyintv"
@@ -13,8 +18,8 @@ android {
         applicationId = "com.dongpiandi.douyintv"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -26,6 +31,17 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            if (releaseSigning != null) {
+                signingConfig = signingConfigs.create("release") {
+                    storeFile = file(releaseSigning.storeFile)
+                    storePassword = releaseSigning.storePassword
+                    keyAlias = releaseSigning.keyAlias
+                    keyPassword = releaseSigning.keyPassword
+                    enableV1Signing = true
+                    enableV2Signing = true
+                    enableV3Signing = true
+                }
+            }
         }
     }
 
@@ -84,4 +100,36 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
+}
+
+data class ReleaseSigning(
+    val storeFile: String,
+    val storePassword: String,
+    val keyAlias: String,
+    val keyPassword: String,
+)
+
+fun signingProperties(): ReleaseSigning? {
+    val properties = Properties()
+    val envPath = System.getenv("DOUYINTV_KEYSTORE_PROPERTIES")
+    val sources = listOfNotNull(
+        envPath?.let { File(it) },
+        rootProject.file("keystore.properties"),
+        rootProject.file("local.properties"),
+    )
+    sources
+        .firstOrNull { it.isFile }
+        ?.inputStream()
+        ?.use { properties.load(it) }
+    val storeFile = properties.getProperty("storeFile") ?: return null
+    val storePassword = properties.getProperty("storePassword") ?: return null
+    val keyAlias = properties.getProperty("keyAlias") ?: return null
+    val keyPassword = properties.getProperty("keyPassword") ?: storePassword
+    if (!file(storeFile).isFile) return null
+    return ReleaseSigning(
+        storeFile = storeFile,
+        storePassword = storePassword,
+        keyAlias = keyAlias,
+        keyPassword = keyPassword,
+    )
 }
