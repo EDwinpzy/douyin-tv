@@ -54,6 +54,45 @@ class ShortsNavigationTest {
         assertFalse(ShortsSource.SEARCH.isSidebarPlayback)
     }
 
+    @Test
+    fun remembersMyHomeTabAndSelectedVideoForReturn() {
+        assertEquals(
+            SidebarPlaybackReturn(
+                kind = SidebarKind.MY_HOME,
+                myHomeTab = MyHomeTab.FAVORITES,
+                videoId = "favorite",
+            ),
+            myHomeSidebarPlaybackReturn(
+                tab = MyHomeTab.FAVORITES,
+                videoId = "favorite",
+            ),
+        )
+    }
+
+    @Test
+    fun remembersAuthorVideoForReturn() {
+        assertEquals(
+            SidebarPlaybackReturn(
+                kind = SidebarKind.AUTHOR,
+                authorTab = 0,
+                videoId = "author-video",
+            ),
+            authorSidebarVideoPlaybackReturn("author-video"),
+        )
+    }
+
+    @Test
+    fun remembersCollectionCardForReturn() {
+        assertEquals(
+            SidebarPlaybackReturn(
+                kind = SidebarKind.AUTHOR,
+                authorTab = 1,
+                collectionId = "collection",
+            ),
+            authorSidebarCollectionPlaybackReturn("collection"),
+        )
+    }
+
     private fun sampleVideo(id: String) = ShortVideo(
         id = id,
         description = id,

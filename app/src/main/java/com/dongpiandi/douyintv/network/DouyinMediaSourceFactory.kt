@@ -7,12 +7,17 @@ import android.net.Uri
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.ResolvingDataSource
+import androidx.media3.datasource.cache.CacheDataSource
+import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
+import androidx.media3.datasource.cache.SimpleCache
+import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
+import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
@@ -21,6 +26,7 @@ object DouyinMediaSourceFactory {
         context: Context,
         referer: String,
         cookieHeader: String? = null,
+        cacheMedia: Boolean = false,
     ): DefaultMediaSourceFactory {
         val baseFactory = DefaultHttpDataSource.Factory()
             .setUserAgent(DouyinApi.USER_AGENT)
@@ -33,7 +39,7 @@ object DouyinMediaSourceFactory {
             .setConnectTimeoutMs(15_000)
             .setReadTimeoutMs(30_000)
             .setAllowCrossProtocolRedirects(true)
-        val dataSourceFactory = cookieHeader
+        val upstreamFactory = cookieHeader
             ?.takeIf(String::isNotBlank)
             ?.let { cookie ->
                 ResolvingDataSource.Factory(
@@ -42,9 +48,30 @@ object DouyinMediaSourceFactory {
                 )
             }
             ?: baseFactory
+        val dataSourceFactory = if (cacheMedia) {
+            CacheDataSource.Factory()
+                .setCache(MediaCache.get(context))
+                .setUpstreamDataSourceFactory(upstreamFactory)
+        } else {
+            upstreamFactory
+        }
         return DefaultMediaSourceFactory(context)
             .setDataSourceFactory(dataSourceFactory)
     }
+}
+
+private object MediaCache {
+    @Volatile
+    private var cache: SimpleCache? = null
+
+    fun get(context: Context): SimpleCache =
+        cache ?: synchronized(this) {
+            cache ?: SimpleCache(
+                File(context.cacheDir, "short-video-cache"),
+                LeastRecentlyUsedCacheEvictor(128L * 1024L * 1024L),
+                StandaloneDatabaseProvider(context.applicationContext),
+            ).also { cache = it }
+        }
 }
 
 internal fun requiresSessionMediaResolution(url: HttpUrl): Boolean {
