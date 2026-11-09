@@ -73,22 +73,33 @@ fun TopChrome(
     onSearchClick: (() -> Unit)? = null,
     downFocusRequester: FocusRequester? = null,
     focusEnabled: Boolean = true,
+    showMainNavigation: Boolean = true,
 ) {
     val fallbackFocusRequester = remember { FocusRequester() }
     val menuFocusRequester = initialFocusRequester ?: fallbackFocusRequester
-    val searchIndex = 2
-    val accountIndex = 3
-    val itemCount = if (showHeaderActions) accountIndex + 1 else 2
+    val navigationItemCount = if (showMainNavigation) 2 else 0
+    val searchIndex = navigationItemCount
+    val accountIndex = searchIndex + 1
+    val itemCount = when {
+        !showHeaderActions -> navigationItemCount
+        else -> accountIndex + 1
+    }
+    val defaultFocusedIndex = when {
+        showMainNavigation && selectedTab == MainTab.LIVE -> 1
+        showMainNavigation -> 0
+        showHeaderActions -> searchIndex
+        else -> 0
+    }
     var menuFocused by remember { mutableStateOf(false) }
     var focusedIndex by remember {
-        mutableIntStateOf(if (selectedTab == MainTab.SHORTS) 0 else 1)
+        mutableIntStateOf(defaultFocusedIndex)
     }
 
-    LaunchedEffect(selectedTab, itemCount) {
+    LaunchedEffect(selectedTab, itemCount, defaultFocusedIndex) {
         if (!menuFocused) {
-            focusedIndex = if (selectedTab == MainTab.SHORTS) 0 else 1
+            focusedIndex = defaultFocusedIndex
         } else if (focusedIndex !in 0 until itemCount) {
-            focusedIndex = 0
+            focusedIndex = defaultFocusedIndex
         }
     }
 
@@ -112,7 +123,7 @@ fun TopChrome(
             .onFocusChanged {
                 menuFocused = it.isFocused
                 if (it.isFocused) {
-                    focusedIndex = if (selectedTab == MainTab.SHORTS) 0 else 1
+                    focusedIndex = defaultFocusedIndex
                     onUserInteraction?.invoke()
                 }
             }
@@ -120,9 +131,11 @@ fun TopChrome(
                 when (event.key) {
                     Key.DirectionLeft, Key.DirectionRight -> {
                         if (event.type == KeyEventType.KeyDown) {
-                            val step = if (event.key == Key.DirectionLeft) -1 else 1
-                            focusedIndex =
-                                Math.floorMod(focusedIndex + step, itemCount)
+                            if (itemCount > 0) {
+                                val step = if (event.key == Key.DirectionLeft) -1 else 1
+                                focusedIndex =
+                                    Math.floorMod(focusedIndex + step, itemCount)
+                            }
                             onUserInteraction?.invoke()
                         }
                         true
@@ -142,7 +155,7 @@ fun TopChrome(
                     else -> false
                 }
             }
-            .focusable(enabled = focusEnabled)
+            .focusable(enabled = focusEnabled && itemCount > 0)
             .semantics {
                 contentDescription = "顶部菜单"
             },
@@ -151,41 +164,43 @@ fun TopChrome(
             modifier = Modifier.align(Alignment.CenterStart),
         )
 
-        Row(
-            modifier = Modifier
-                .align(Alignment.Center)
-                .glassSurface(
-                    shape = RoundedCornerShape(50),
-                    style = GlassStyle(
-                        top = Color(0xC7171C27),
-                        bottom = Color(0xA6080A11),
-                        border = Color.White.copy(alpha = 0.18f),
-                        sheen = Color.White.copy(alpha = 0.12f),
-                        shadowAlpha = 0.3f,
-                    ),
-                    elevation = 8.dp,
-                )
-                .padding(3.dp),
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            MainNavTab(
-                label = "推荐",
-                selected = selectedTab == MainTab.SHORTS,
-                focused = menuFocused && focusedIndex == 0,
-            )
-            MainNavTab(
-                label = "直播",
-                selected = selectedTab == MainTab.LIVE,
-                focused = menuFocused && focusedIndex == 1,
-                icon = {
-                    Icon(
-                        imageVector = Icons.Outlined.LiveTv,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
+        if (showMainNavigation) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .glassSurface(
+                        shape = RoundedCornerShape(50),
+                        style = GlassStyle(
+                            top = Color(0xC7171C27),
+                            bottom = Color(0xA6080A11),
+                            border = Color.White.copy(alpha = 0.18f),
+                            sheen = Color.White.copy(alpha = 0.12f),
+                            shadowAlpha = 0.3f,
+                        ),
+                        elevation = 8.dp,
                     )
-                },
-            )
+                    .padding(3.dp),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                MainNavTab(
+                    label = "推荐",
+                    selected = selectedTab == MainTab.SHORTS,
+                    focused = menuFocused && focusedIndex == 0,
+                )
+                MainNavTab(
+                    label = "直播",
+                    selected = selectedTab == MainTab.LIVE,
+                    focused = menuFocused && focusedIndex == 1,
+                    icon = {
+                        Icon(
+                            imageVector = Icons.Outlined.LiveTv,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    },
+                )
+            }
         }
 
         if (showHeaderActions) {

@@ -29,6 +29,7 @@ internal object ShortsPreloadPolicy {
     }
 
     fun targetDurationMs(distance: Int): Long? = when (distance) {
+        -1 -> 8_000L
         1 -> 8_000L
         2 -> 6_000L
         3 -> 4_000L

@@ -34,6 +34,8 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -56,6 +58,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -115,8 +118,12 @@ fun MyHomeSidebar(
     onPlayFavorite: (ShortVideo) -> Unit,
     onPlayMyVideo: (ShortVideo) -> Unit,
     onLogout: () -> Unit,
+    currentVideoId: String? = null,
+    restoreFocusVideoId: String? = null,
+    onFocusRestored: () -> Unit = {},
 ) {
     val tabs = MyHomeTab.entries
+    var pinnedCurrentVideoId by remember { mutableStateOf(currentVideoId) }
     val tabRequesters = remember {
         tabs.associateWith { FocusRequester() }
     }
@@ -142,9 +149,23 @@ fun MyHomeSidebar(
         }
     }
 
-    LaunchedEffect(selectedTab) {
+    val focusTargetInList = when (selectedTab) {
+        MyHomeTab.HISTORY -> history.any { it.video.id == restoreFocusVideoId }
+        MyHomeTab.FAVORITES -> favorites.any { it.id == restoreFocusVideoId }
+        MyHomeTab.PROFILE -> profile.videos.any { it.id == restoreFocusVideoId }
+    }
+
+    LaunchedEffect(currentVideoId) {
+        if (pinnedCurrentVideoId == null && currentVideoId != null) {
+            pinnedCurrentVideoId = currentVideoId
+        }
+    }
+
+    LaunchedEffect(Unit) {
         delay(80)
-        tabRequesters[selectedTab]?.requestFocus()
+        if (restoreFocusVideoId == null || !focusTargetInList) {
+            tabRequesters[selectedTab]?.requestFocus()
+        }
     }
 
     SidebarFrame(title = "我的主页", onClose = onClose) {
@@ -180,6 +201,9 @@ fun MyHomeSidebar(
                 emptyText = "还没有观看记录",
                 firstFocusRequester = historyFocusRequester,
                 upFocusRequester = tabRequesters.getValue(MyHomeTab.HISTORY),
+                currentVideoId = pinnedCurrentVideoId,
+                focusTargetVideoId = restoreFocusVideoId,
+                onFocusTargetFocused = onFocusRestored,
                 onPlay = onPlayHistory,
             )
 
@@ -193,6 +217,9 @@ fun MyHomeSidebar(
                 emptyText = "收藏夹还是空的",
                 firstFocusRequester = favoritesFocusRequester,
                 upFocusRequester = tabRequesters.getValue(MyHomeTab.FAVORITES),
+                currentVideoId = pinnedCurrentVideoId,
+                focusTargetVideoId = restoreFocusVideoId,
+                onFocusTargetFocused = onFocusRestored,
                 onRetry = onRetryFavorites,
                 onLoadMore = onLoadMoreFavorites,
                 onPlay = onPlayFavorite,
@@ -202,6 +229,9 @@ fun MyHomeSidebar(
                 profile = profile,
                 firstFocusRequester = profileFocusRequester,
                 upFocusRequester = tabRequesters.getValue(MyHomeTab.PROFILE),
+                currentVideoId = pinnedCurrentVideoId,
+                focusTargetVideoId = restoreFocusVideoId,
+                onFocusTargetFocused = onFocusRestored,
                 onRetry = onRetryMyVideos,
                 onLoadMore = onLoadMoreMyVideos,
                 onPlay = onPlayMyVideo,
@@ -230,6 +260,7 @@ fun AuthorProfileSidebar(
     collectionsError: String?,
     collectionsHasMore: Boolean,
     openingCollectionId: String?,
+    currentVideoId: String? = null,
     onClose: () -> Unit,
     onTabSelected: (Int) -> Unit,
     onRetryProfile: () -> Unit,
@@ -239,9 +270,13 @@ fun AuthorProfileSidebar(
     onRetryCollections: () -> Unit,
     onLoadMoreCollections: () -> Unit,
     onPlayCollection: (VideoCollection) -> Unit,
+    restoreTab: Int? = null,
+    restoreFocusVideoId: String? = null,
+    restoreFocusCollectionId: String? = null,
+    onFocusRestored: () -> Unit = {},
 ) {
-    var selectedTab by remember(profile?.nickname ?: fallbackName) {
-        mutableIntStateOf(0)
+    var selectedTab by remember {
+        mutableIntStateOf(restoreTab?.coerceIn(0, 1) ?: 0)
     }
     val showCollectionsTab = shouldShowAuthorCollectionsTab(
         collectionsLoaded = collectionsLoaded,
@@ -251,10 +286,21 @@ fun AuthorProfileSidebar(
     val tabRequesters = remember { listOf(FocusRequester(), FocusRequester()) }
     val firstVideoFocusRequester = remember { FocusRequester() }
     val firstCollectionFocusRequester = remember { FocusRequester() }
+    var pinnedCurrentVideoId by remember { mutableStateOf(currentVideoId) }
+    val hasRestoreFocusTarget =
+        restoreFocusVideoId != null || restoreFocusCollectionId != null
+
+    LaunchedEffect(currentVideoId) {
+        if (pinnedCurrentVideoId == null && currentVideoId != null) {
+            pinnedCurrentVideoId = currentVideoId
+        }
+    }
 
     LaunchedEffect(Unit) {
-        delay(80)
-        tabRequesters.first().requestFocus()
+        if (!hasRestoreFocusTarget) {
+            delay(80)
+            tabRequesters.first().requestFocus()
+        }
     }
     LaunchedEffect(showCollectionsTab) {
         if (!showCollectionsTab && selectedTab != 0) {
@@ -325,6 +371,10 @@ fun AuthorProfileSidebar(
                 emptyText = "博主还没有公开视频",
                 firstFocusRequester = firstVideoFocusRequester,
                 upFocusRequester = tabRequesters.first(),
+                currentVideoId = pinnedCurrentVideoId,
+                autoLoadForCurrent = true,
+                focusTargetVideoId = restoreFocusVideoId,
+                onFocusTargetFocused = onFocusRestored,
                 onRetry = onRetryVideos,
                 onLoadMore = onLoadMore,
                 onPlay = onPlay,
@@ -339,6 +389,8 @@ fun AuthorProfileSidebar(
                 openingCollectionId = openingCollectionId,
                 firstFocusRequester = firstCollectionFocusRequester,
                 upFocusRequester = tabRequesters.getOrNull(1),
+                focusTargetCollectionId = restoreFocusCollectionId,
+                onFocusTargetFocused = onFocusRestored,
                 onRetry = onRetryCollections,
                 onLoadMore = onLoadMoreCollections,
                 onPlay = onPlayCollection,
@@ -613,7 +665,12 @@ private fun SidebarTab(
                             event.type == KeyEventType.KeyDown &&
                             event.nativeKeyEvent.repeatCount == 0
                         ) {
-                            downFocusRequester?.requestFocus()
+                            val target = downFocusRequester
+                            if (target == null ||
+                                runCatching { target.requestFocus() }.isFailure
+                            ) {
+                                return@onPreviewKeyEvent false
+                            }
                         }
                         true
                     }
@@ -655,6 +712,8 @@ private fun SidebarCollectionList(
     openingCollectionId: String?,
     firstFocusRequester: FocusRequester? = null,
     upFocusRequester: FocusRequester? = null,
+    focusTargetCollectionId: String? = null,
+    onFocusTargetFocused: () -> Unit = {},
     onRetry: () -> Unit,
     onLoadMore: () -> Unit,
     onPlay: (VideoCollection) -> Unit,
@@ -696,8 +755,28 @@ private fun SidebarCollectionList(
         collections.isEmpty() -> SidebarEmptyState("暂无公开合集")
 
         else -> {
+            val gridState = rememberLazyGridState()
+            val targetIndex = collections.indexOfFirst {
+                it.id == focusTargetCollectionId
+            }
+            val targetFocusRequester = remember(focusTargetCollectionId) {
+                FocusRequester()
+            }
+
+            LaunchedEffect(focusTargetCollectionId, targetIndex, collections) {
+                if (focusTargetCollectionId == null || targetIndex < 0) {
+                    return@LaunchedEffect
+                }
+                gridState.scrollToItem(targetIndex)
+                withFrameNanos { }
+                delay(32)
+                runCatching { targetFocusRequester.requestFocus() }
+                    .onSuccess { onFocusTargetFocused() }
+            }
+
             LazyVerticalGrid(
                 columns = GridCells.Fixed(2),
+                state = gridState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -712,7 +791,13 @@ private fun SidebarCollectionList(
                         collection = collection,
                         opening = openingCollectionId == collection.id,
                         focusRequester = if (collection.id == collections.first().id) {
-                            firstFocusRequester ?: requester
+                            if (collection.id == focusTargetCollectionId) {
+                                targetFocusRequester
+                            } else {
+                                firstFocusRequester ?: requester
+                            }
+                        } else if (collection.id == focusTargetCollectionId) {
+                            targetFocusRequester
                         } else {
                             requester
                         },
@@ -931,6 +1016,10 @@ private fun SidebarVideoList(
     emptyText: String,
     firstFocusRequester: FocusRequester? = null,
     upFocusRequester: FocusRequester? = null,
+    currentVideoId: String? = null,
+    autoLoadForCurrent: Boolean = false,
+    focusTargetVideoId: String? = null,
+    onFocusTargetFocused: () -> Unit = {},
     onRetry: () -> Unit = {},
     onLoadMore: () -> Unit = {},
     onPlay: (ShortVideo) -> Unit,
@@ -972,28 +1061,96 @@ private fun SidebarVideoList(
         videos.isEmpty() -> SidebarEmptyState(emptyText)
 
         else -> {
+            val gridState = rememberLazyGridState()
+            val targetIndex = videos.indexOfFirst { it.id == focusTargetVideoId }
+            val currentIndex = videos.indexOfFirst { it.id == currentVideoId }
+            val targetFocusRequester = remember(focusTargetVideoId) {
+                FocusRequester()
+            }
+            var autoScrolledToCurrent by remember { mutableStateOf(false) }
+            var autoLoadAttempts by remember(currentVideoId) {
+                mutableIntStateOf(0)
+            }
+
+            LaunchedEffect(videos, currentVideoId, currentIndex, focusTargetVideoId) {
+                if (
+                    autoScrolledToCurrent ||
+                    focusTargetVideoId != null ||
+                    currentIndex < 0
+                ) {
+                    return@LaunchedEffect
+                }
+                gridState.scrollToItem(currentIndex)
+                autoScrolledToCurrent = true
+            }
+
+            LaunchedEffect(
+                videos,
+                currentVideoId,
+                currentIndex,
+                autoLoadForCurrent,
+                autoScrolledToCurrent,
+                hasMore,
+                loadingMore,
+                focusTargetVideoId,
+            ) {
+                if (
+                    !autoLoadForCurrent ||
+                    autoScrolledToCurrent ||
+                    focusTargetVideoId != null ||
+                    currentVideoId == null ||
+                    currentIndex >= 0 ||
+                    !hasMore ||
+                    loadingMore ||
+                    autoLoadAttempts >= 5
+                ) {
+                    return@LaunchedEffect
+                }
+                autoLoadAttempts++
+                onLoadMore()
+            }
+
+            LaunchedEffect(focusTargetVideoId, targetIndex, videos) {
+                if (focusTargetVideoId == null || targetIndex < 0) {
+                    return@LaunchedEffect
+                }
+                gridState.scrollToItem(targetIndex)
+                withFrameNanos { }
+                delay(32)
+                runCatching { targetFocusRequester.requestFocus() }
+                    .onSuccess { onFocusTargetFocused() }
+            }
+
             LazyVerticalGrid(
                 columns = GridCells.Fixed(2),
+                state = gridState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                items(
+                itemsIndexed(
                     items = videos,
-                    key = ShortVideo::id,
-                ) { video ->
+                    key = { _, video -> video.id },
+                ) { index, video ->
                     val requester = remember(video.id) { FocusRequester() }
                     SidebarVideoCard(
                         video = video,
                         progress = progressByVideoId[video.id],
+                        playing = video.id == currentVideoId,
                         focusRequester = if (video.id == videos.first().id) {
-                            firstFocusRequester ?: requester
+                            if (video.id == focusTargetVideoId) {
+                                targetFocusRequester
+                            } else {
+                                firstFocusRequester ?: requester
+                            }
+                        } else if (video.id == focusTargetVideoId) {
+                            targetFocusRequester
                         } else {
                             requester
                         },
                         onPlay = { onPlay(video) },
-                        upFocusRequester = upFocusRequester,
+                        upFocusRequester = upFocusRequester.takeIf { index < 2 },
                     )
                 }
                 if (error != null) {
@@ -1045,6 +1202,7 @@ private fun SidebarVideoList(
 private fun SidebarVideoCard(
     video: ShortVideo,
     progress: PlaybackProgress?,
+    playing: Boolean = false,
     focusRequester: FocusRequester,
     upFocusRequester: FocusRequester? = null,
     onPlay: () -> Unit,
@@ -1131,6 +1289,31 @@ private fun SidebarVideoCard(
                     lineHeight = 11.sp,
                 ),
             )
+            if (playing) {
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(
+                                    Color.Black.copy(alpha = 0.34f),
+                                    Color.Black.copy(alpha = 0.52f),
+                                ),
+                            ),
+                        ),
+                )
+                Text(
+                    text = "播放中",
+                    modifier = Modifier
+                        .align(Alignment.Center),
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontSize = 10.sp,
+                        lineHeight = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    ),
+                )
+            }
             VideoProgressBar(
                 progress = progress?.fraction ?: 0f,
                 modifier = Modifier
@@ -1183,6 +1366,9 @@ private fun MyProfileContent(
     profile: MyProfileUiState,
     firstFocusRequester: FocusRequester,
     upFocusRequester: FocusRequester,
+    currentVideoId: String?,
+    focusTargetVideoId: String?,
+    onFocusTargetFocused: () -> Unit,
     onRetry: () -> Unit,
     onLoadMore: () -> Unit,
     onPlay: (ShortVideo) -> Unit,
@@ -1201,6 +1387,9 @@ private fun MyProfileContent(
         },
         firstFocusRequester = firstFocusRequester,
         upFocusRequester = upFocusRequester,
+        currentVideoId = currentVideoId,
+        focusTargetVideoId = focusTargetVideoId,
+        onFocusTargetFocused = onFocusTargetFocused,
         onRetry = onRetry,
         onLoadMore = onLoadMore,
         onPlay = onPlay,

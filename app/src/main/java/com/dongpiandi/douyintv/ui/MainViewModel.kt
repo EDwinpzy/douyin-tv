@@ -45,6 +45,19 @@ enum class MyHomeTab {
     PROFILE,
 }
 
+enum class SidebarKind {
+    MY_HOME,
+    AUTHOR,
+}
+
+data class SidebarPlaybackReturn(
+    val kind: SidebarKind,
+    val myHomeTab: MyHomeTab = MyHomeTab.PROFILE,
+    val authorTab: Int = 0,
+    val videoId: String? = null,
+    val collectionId: String? = null,
+)
+
 data class ShortsUiState(
     val videos: List<ShortVideo> = emptyList(),
     val index: Int = 0,
@@ -193,6 +206,7 @@ data class AppUiState(
     val live: LiveListUiState = LiveListUiState(),
     val livePlayer: LivePlayerUiState? = null,
     val recommendationReturn: ShortsUiState? = null,
+    val sidebarPlaybackReturn: SidebarPlaybackReturn? = null,
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -458,6 +472,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             video = video,
             sourceVideos = _state.value.favorites.videos,
             source = ShortsSource.FAVORITES,
+            sidebarReturn = myHomeSidebarPlaybackReturn(
+                tab = MyHomeTab.FAVORITES,
+                videoId = video.id,
+            ),
         )
     }
 
@@ -466,6 +484,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             video = video,
             sourceVideos = _state.value.history.map(PlaybackHistoryEntry::video),
             source = ShortsSource.FAVORITES,
+            sidebarReturn = myHomeSidebarPlaybackReturn(
+                tab = MyHomeTab.HISTORY,
+                videoId = video.id,
+            ),
         )
     }
 
@@ -474,6 +496,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             video = video,
             sourceVideos = _state.value.myProfile.videos,
             source = ShortsSource.AUTHOR,
+            sidebarReturn = myHomeSidebarPlaybackReturn(
+                tab = MyHomeTab.PROFILE,
+                videoId = video.id,
+            ),
         )
     }
 
@@ -485,6 +511,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (sameAuthor) {
                 it.copy(
                     accountMenuVisible = false,
+                    sidebarPlaybackReturn = null,
                     authorVideos = it.authorVideos.copy(
                         visible = true,
                         authorName = video.authorName,
@@ -500,6 +527,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } else {
                 it.copy(
                     accountMenuVisible = false,
+                    sidebarPlaybackReturn = null,
                     authorVideos = AuthorVideosUiState(
                         visible = true,
                         authorSecUid = video.authorSecUid,
@@ -528,7 +556,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 authorVideos = it.authorVideos.copy(
                     visible = false,
                 ),
+                sidebarPlaybackReturn = null,
             )
+        }
+    }
+
+    fun restoreSidebarFromPlayback(): Boolean {
+        val saved = _state.value.sidebarPlaybackReturn ?: return false
+        _state.update {
+            when (saved.kind) {
+                SidebarKind.MY_HOME -> it.copy(
+                    overlayVisible = false,
+                    accountMenuVisible = true,
+                    myHomeTab = saved.myHomeTab,
+                    authorVideos = it.authorVideos.copy(visible = false),
+                    search = it.search.copy(visible = false),
+                )
+
+                SidebarKind.AUTHOR -> it.copy(
+                    overlayVisible = false,
+                    accountMenuVisible = false,
+                    authorVideos = it.authorVideos.copy(visible = true),
+                    search = it.search.copy(visible = false),
+                )
+            }
+        }
+        return true
+    }
+
+    fun consumeSidebarPlaybackReturn() {
+        _state.update {
+            if (it.sidebarPlaybackReturn == null) {
+                it
+            } else {
+                it.copy(sidebarPlaybackReturn = null)
+            }
         }
     }
 
@@ -548,6 +610,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 engagement = EngagementUiState(),
                 shorts = saved.copy(paused = false, error = null),
                 recommendationReturn = null,
+                sidebarPlaybackReturn = null,
             )
         }
     }
@@ -565,6 +628,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             video = video,
             sourceVideos = _state.value.authorVideos.videos,
             source = ShortsSource.AUTHOR,
+            sidebarReturn = authorSidebarVideoPlaybackReturn(video.id),
         )
     }
 
@@ -640,6 +704,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             video = firstVideo,
                             sourceVideos = page.videos,
                             source = ShortsSource.AUTHOR,
+                            sidebarReturn = authorSidebarCollectionPlaybackReturn(
+                                collection.id,
+                            ),
                         )
                     }
                 }
@@ -672,6 +739,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 accountMenuVisible = false,
                 authorVideos = it.authorVideos.copy(visible = false),
                 search = it.search.copy(visible = true, error = null),
+                sidebarPlaybackReturn = null,
             )
         }
     }
@@ -791,7 +859,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectTab(tab: MainTab) {
-        _state.update { it.copy(tab = tab, overlayVisible = true) }
+        _state.update {
+            it.copy(
+                tab = tab,
+                overlayVisible = true,
+                sidebarPlaybackReturn = null,
+            )
+        }
         if (tab == MainTab.LIVE && !_state.value.live.loaded) {
             loadLiveRooms(reset = true)
         }
@@ -993,6 +1067,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     progress = progressStore.load(it.favorites.videos.map(ShortVideo::id)),
                 ),
                 authorVideos = it.authorVideos.copy(visible = false),
+                sidebarPlaybackReturn = null,
             )
         }
         if (tab == MyHomeTab.FAVORITES && !_state.value.favorites.loaded) {
@@ -1008,6 +1083,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 overlayVisible = false,
                 accountMenuVisible = false,
+                sidebarPlaybackReturn = null,
             )
         }
     }
@@ -1569,6 +1645,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         video: ShortVideo,
         sourceVideos: List<ShortVideo>,
         source: ShortsSource,
+        sidebarReturn: SidebarPlaybackReturn? = null,
     ) {
         val ordered = sourceVideos.ifEmpty { listOf(video) }
         val index = ordered.indexOfFirst { it.id == video.id }.takeIf { it >= 0 } ?: 0
@@ -1585,6 +1662,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     existingReturn = it.recommendationReturn,
                     nextSource = source,
                 ),
+                sidebarPlaybackReturn = sidebarReturn,
                 shorts = it.shorts.copy(
                     videos = ordered,
                     index = index,
@@ -1658,6 +1736,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             null
                         } else {
                             it.recommendationReturn
+                        },
+                        sidebarPlaybackReturn = if (reset) {
+                            null
+                        } else {
+                            it.sidebarPlaybackReturn
                         },
                         shorts = it.shorts.copy(
                             loading = true,

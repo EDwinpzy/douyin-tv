@@ -24,12 +24,14 @@ class ShortsPreloadPolicyTest {
     }
 
     @Test
-    fun targetDurationOnlyAppliesToForwardWindow() {
+    fun targetDurationCoversPreviousAndForwardWindow() {
+        assertEquals(8_000L, ShortsPreloadPolicy.targetDurationMs(-1))
         assertEquals(8_000L, ShortsPreloadPolicy.targetDurationMs(1))
         assertEquals(6_000L, ShortsPreloadPolicy.targetDurationMs(2))
         assertEquals(4_000L, ShortsPreloadPolicy.targetDurationMs(3))
         assertEquals(3_000L, ShortsPreloadPolicy.targetDurationMs(4))
         assertNull(ShortsPreloadPolicy.targetDurationMs(0))
+        assertNull(ShortsPreloadPolicy.targetDurationMs(-2))
         assertNull(ShortsPreloadPolicy.targetDurationMs(5))
     }
 

@@ -3,6 +3,7 @@
 
 package com.dongpiandi.douyintv.ui.screens
 
+import android.os.SystemClock
 import android.view.View
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.background
@@ -70,6 +71,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.ui.AspectRatioFrameLayout
@@ -88,6 +90,7 @@ import com.dongpiandi.douyintv.ui.components.PlaybackProgressIndicator
 import com.dongpiandi.douyintv.ui.components.TopChrome
 import com.dongpiandi.douyintv.ui.components.glassSurface
 import com.dongpiandi.douyintv.ui.formatCount
+import com.dongpiandi.douyintv.ui.isSidebarPlayback
 import com.dongpiandi.douyintv.ui.theme.FocusRing
 import com.dongpiandi.douyintv.ui.theme.Panel
 import com.dongpiandi.douyintv.ui.theme.TextPrimary
@@ -98,6 +101,12 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 private const val OVERLAY_AUTO_HIDE_DELAY_MS = 4_000L
 private const val DANMAKU_HEIGHT_FRACTION = 0.15f
+private const val RAPID_SWITCH_WINDOW_MS = 280L
+private const val RAPID_SWITCH_SETTLE_MS = 220L
+private const val SEEK_STEP_MS = 5_000L
+private const val SEEK_FAST_STEP_MS = 10_000L
+private const val SEEK_REPEAT_INTERVAL_MS = 120L
+private const val SEEK_ACCELERATION_AFTER_MS = 1_200L
 
 @Composable
 fun ShortsScreen(
@@ -164,6 +173,9 @@ fun ShortsScreen(
     val latestOnProgress by rememberUpdatedState(onPlaybackProgress)
     val activeUrl = current?.playUrls?.getOrNull(urlIndex)
     val commentsVisible = engagement.visible
+    val lastPrepareRequestAt = remember { LongArray(1) }
+    val seekStartedAt = remember { LongArray(1) }
+    val lastSeekAt = remember { LongArray(1) }
 
     DisposableEffect(player) {
         val listener = object : Player.Listener {
@@ -177,6 +189,14 @@ fun ShortsScreen(
                         latestOnProgress(video.id, player.duration, player.duration)
                     }
                     latestOnEnded()
+                }
+            }
+
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
+                    latestOnEnded()
+                } else if (player.playbackState == Player.STATE_READY) {
+                    readyVideoId = mediaItem?.mediaId?.substringBefore(':')
                 }
             }
 
@@ -209,7 +229,7 @@ fun ShortsScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    LaunchedEffect(current?.id, activeUrl) {
+    LaunchedEffect(current?.id, activeUrl, state.videos) {
         if (activeUrl.isNullOrBlank()) {
             player.stop()
             player.clearMediaItems()
@@ -217,9 +237,15 @@ fun ShortsScreen(
         }
         val video = current ?: return@LaunchedEffect
         readyVideoId = null
-        playbackEngine.prepare(video, urlIndex)
-        player.prepare()
-        player.seekTo(0L)
+        val now = SystemClock.elapsedRealtime()
+        val rapidSwitch =
+            lastPrepareRequestAt[0] != 0L &&
+                now - lastPrepareRequestAt[0] < RAPID_SWITCH_WINDOW_MS
+        lastPrepareRequestAt[0] = now
+        if (rapidSwitch) {
+            delay(RAPID_SWITCH_SETTLE_MS)
+        }
+        playbackEngine.syncQueue(state.videos, state.index, urlIndex)
         player.playWhenReady = !state.paused
     }
 
@@ -377,13 +403,23 @@ fun ShortsScreen(
                     return@onPreviewKeyEvent false
                 }
                 if (event.type == KeyEventType.KeyUp) return@onPreviewKeyEvent true
+                val now = SystemClock.elapsedRealtime()
                 if (event.nativeKeyEvent.repeatCount == 0) {
-                    val delta = if (event.key == Key.DirectionLeft) -5_000L else 5_000L
-                    val maxPosition = player.duration.takeIf { it > 0L } ?: Long.MAX_VALUE
-                    player.seekTo(
-                        (player.currentPosition + delta).coerceIn(0L, maxPosition),
-                    )
+                    seekStartedAt[0] = now
+                } else if (now - lastSeekAt[0] < SEEK_REPEAT_INTERVAL_MS) {
+                    return@onPreviewKeyEvent true
                 }
+                lastSeekAt[0] = now
+                val step = if (now - seekStartedAt[0] >= SEEK_ACCELERATION_AFTER_MS) {
+                    SEEK_FAST_STEP_MS
+                } else {
+                    SEEK_STEP_MS
+                }
+                val direction = if (event.key == Key.DirectionLeft) -1L else 1L
+                val maxPosition = player.duration.takeIf { it > 0L } ?: Long.MAX_VALUE
+                player.seekTo(
+                    (player.currentPosition + direction * step).coerceIn(0L, maxPosition),
+                )
                 true
             },
     ) {
@@ -409,27 +445,6 @@ fun ShortsScreen(
         } else {
             Modifier.fillMaxSize()
         }
-        val aspectRatio = current?.aspectRatio
-        val fittedByWidthHeight = aspectRatio
-            ?.takeIf { it > 0f }
-            ?.let { videoRegionWidth / it }
-        val videoFrameModifier = if (
-            aspectRatio != null &&
-            fittedByWidthHeight != null
-        ) {
-            if (fittedByWidthHeight <= maxHeight) {
-                Modifier
-                    .width(videoRegionWidth)
-                    .height(fittedByWidthHeight)
-            } else {
-                Modifier
-                    .width(maxHeight * aspectRatio)
-                    .height(maxHeight)
-            }
-        } else {
-            Modifier.fillMaxSize()
-        }
-
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -491,27 +506,23 @@ fun ShortsScreen(
             modifier = videoRegionModifier,
         ) {
             if (current != null) {
-                Box(
-                    modifier = videoFrameModifier.align(Alignment.Center),
-                ) {
-                    AndroidView(
-                        factory = { viewContext ->
-                            PlayerView(viewContext).apply {
-                                useController = false
-                                setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
-                                setKeepContentOnPlayerReset(true)
-                                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                                setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                                isFocusable = false
-                                isClickable = false
-                                importantForAccessibility =
-                                    View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
-                            }
-                        },
-                        update = { view -> view.player = player },
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                }
+                AndroidView(
+                    factory = { viewContext ->
+                        PlayerView(viewContext).apply {
+                            useController = false
+                            setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
+                            setKeepContentOnPlayerReset(true)
+                            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                            setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                            isFocusable = false
+                            isClickable = false
+                            importantForAccessibility =
+                                View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+                        }
+                    },
+                    update = { view -> view.player = player },
+                    modifier = Modifier.fillMaxSize(),
+                )
             }
         }
 
@@ -543,6 +554,7 @@ fun ShortsScreen(
                     showHeaderActions = !sidePanelVisible,
                     onSearchClick = onSearchClick,
                     downFocusRequester = bottomActionsFocusRequester,
+                    showMainNavigation = !state.source.isSidebarPlayback,
                 )
                 Spacer(Modifier.weight(1f))
             }

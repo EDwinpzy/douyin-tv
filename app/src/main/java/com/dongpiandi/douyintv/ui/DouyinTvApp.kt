@@ -67,6 +67,7 @@ fun DouyinTvApp(viewModel: MainViewModel) {
     val context = LocalContext.current
     val activity = context.findActivity()
     val livePlayer = state.livePlayer
+    val sidebarReturn = state.sidebarPlaybackReturn
     var lastExitBackAtMs by remember { mutableLongStateOf(0L) }
     val performanceProfile = remember(context) {
         DevicePerformanceProfile.detect(context)
@@ -85,6 +86,9 @@ fun DouyinTvApp(viewModel: MainViewModel) {
                 state.tab == MainTab.SHORTS && state.engagement.visible ->
                     viewModel.closeComments()
                 state.tab == MainTab.SHORTS && state.overlayVisible -> viewModel.hideOverlay()
+                state.tab == MainTab.SHORTS &&
+                    state.shorts.source.isSidebarPlayback &&
+                    sidebarReturn != null -> viewModel.restoreSidebarFromPlayback()
                 state.tab == MainTab.SHORTS && state.shorts.source.isSidebarPlayback ->
                     viewModel.returnToRecommendation()
                 else -> {
@@ -214,6 +218,11 @@ fun DouyinTvApp(viewModel: MainViewModel) {
                 onPlayFavorite = viewModel::playFavorite,
                 onPlayMyVideo = viewModel::playMyVideo,
                 onLogout = viewModel::logout,
+                currentVideoId = state.shorts.current?.id,
+                restoreFocusVideoId = sidebarReturn
+                    ?.takeIf { it.kind == SidebarKind.MY_HOME }
+                    ?.videoId,
+                onFocusRestored = viewModel::consumeSidebarPlaybackReturn,
             )
         }
 
@@ -237,6 +246,7 @@ fun DouyinTvApp(viewModel: MainViewModel) {
                 collectionsError = state.authorVideos.collectionsError,
                 collectionsHasMore = state.authorVideos.collectionsHasMore,
                 openingCollectionId = state.authorVideos.openingCollectionId,
+                currentVideoId = state.shorts.current?.id,
                 onClose = viewModel::closeAuthorVideos,
                 onTabSelected = viewModel::selectAuthorTab,
                 onRetryProfile = viewModel::retryAuthorProfile,
@@ -246,6 +256,16 @@ fun DouyinTvApp(viewModel: MainViewModel) {
                 onRetryCollections = viewModel::retryAuthorCollections,
                 onLoadMoreCollections = viewModel::loadMoreAuthorCollections,
                 onPlayCollection = viewModel::playAuthorCollection,
+                restoreTab = sidebarReturn
+                    ?.takeIf { it.kind == SidebarKind.AUTHOR }
+                    ?.authorTab,
+                restoreFocusVideoId = sidebarReturn
+                    ?.takeIf { it.kind == SidebarKind.AUTHOR }
+                    ?.videoId,
+                restoreFocusCollectionId = sidebarReturn
+                    ?.takeIf { it.kind == SidebarKind.AUTHOR }
+                    ?.collectionId,
+                onFocusRestored = viewModel::consumeSidebarPlaybackReturn,
             )
             }
 

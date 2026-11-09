@@ -13,3 +13,27 @@ internal fun recommendationReturnAfterPlayback(
         it.source == ShortsSource.RECOMMEND
     }
 }
+
+internal fun myHomeSidebarPlaybackReturn(
+    tab: MyHomeTab,
+    videoId: String,
+): SidebarPlaybackReturn = SidebarPlaybackReturn(
+    kind = SidebarKind.MY_HOME,
+    myHomeTab = tab,
+    videoId = videoId,
+)
+
+internal fun authorSidebarVideoPlaybackReturn(videoId: String): SidebarPlaybackReturn =
+    SidebarPlaybackReturn(
+        kind = SidebarKind.AUTHOR,
+        authorTab = 0,
+        videoId = videoId,
+    )
+
+internal fun authorSidebarCollectionPlaybackReturn(
+    collectionId: String,
+): SidebarPlaybackReturn = SidebarPlaybackReturn(
+    kind = SidebarKind.AUTHOR,
+    authorTab = 1,
+    collectionId = collectionId,
+)
