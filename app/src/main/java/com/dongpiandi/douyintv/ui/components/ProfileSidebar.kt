@@ -121,6 +121,26 @@ fun MyHomeSidebar(
         tabs.associateWith { FocusRequester() }
     }
     val historyFocusRequester = remember { FocusRequester() }
+    val favoritesFocusRequester = remember { FocusRequester() }
+    val profileFocusRequester = remember { FocusRequester() }
+    val contentFocusRequester = when (selectedTab) {
+        MyHomeTab.HISTORY -> historyFocusRequester.takeIf {
+            history.isNotEmpty()
+        }
+
+        MyHomeTab.FAVORITES -> favoritesFocusRequester.takeIf {
+            favorites.isNotEmpty() || (!favoritesLoading && favoritesError != null)
+        }
+
+        MyHomeTab.PROFILE -> profileFocusRequester.takeIf {
+            profile.videos.isNotEmpty() ||
+                (
+                    !profile.loading &&
+                        !profile.videosLoading &&
+                        (profile.videosError ?: profile.error) != null
+                    )
+        }
+    }
 
     LaunchedEffect(selectedTab) {
         delay(80)
@@ -147,6 +167,7 @@ fun MyHomeSidebar(
             labels = listOf("观看历史", "我的收藏", "我的主页"),
             selectedIndex = tabs.indexOf(selectedTab),
             requesters = tabs.map { tabRequesters.getValue(it) },
+            downFocusRequester = contentFocusRequester,
             onSelected = { index -> onTabSelected(tabs[index]) },
         )
         Spacer(Modifier.height(7.dp))
@@ -158,6 +179,7 @@ fun MyHomeSidebar(
                 },
                 emptyText = "还没有观看记录",
                 firstFocusRequester = historyFocusRequester,
+                upFocusRequester = tabRequesters.getValue(MyHomeTab.HISTORY),
                 onPlay = onPlayHistory,
             )
 
@@ -169,6 +191,8 @@ fun MyHomeSidebar(
                 error = favoritesError,
                 hasMore = favoritesHasMore,
                 emptyText = "收藏夹还是空的",
+                firstFocusRequester = favoritesFocusRequester,
+                upFocusRequester = tabRequesters.getValue(MyHomeTab.FAVORITES),
                 onRetry = onRetryFavorites,
                 onLoadMore = onLoadMoreFavorites,
                 onPlay = onPlayFavorite,
@@ -176,6 +200,8 @@ fun MyHomeSidebar(
 
             MyHomeTab.PROFILE -> MyProfileContent(
                 profile = profile,
+                firstFocusRequester = profileFocusRequester,
+                upFocusRequester = tabRequesters.getValue(MyHomeTab.PROFILE),
                 onRetry = onRetryMyVideos,
                 onLoadMore = onLoadMoreMyVideos,
                 onPlay = onPlayMyVideo,
@@ -197,13 +223,8 @@ fun AuthorProfileSidebar(
     loadingMore: Boolean,
     error: String?,
     hasMore: Boolean,
-    likes: List<ShortVideo>,
-    likesProgress: Map<String, PlaybackProgress>,
-    likesLoading: Boolean,
-    likesLoadingMore: Boolean,
-    likesError: String?,
-    likesHasMore: Boolean,
     collections: List<VideoCollection>,
+    collectionsLoaded: Boolean,
     collectionsLoading: Boolean,
     collectionsLoadingMore: Boolean,
     collectionsError: String?,
@@ -215,9 +236,6 @@ fun AuthorProfileSidebar(
     onRetryVideos: () -> Unit,
     onLoadMore: () -> Unit,
     onPlay: (ShortVideo) -> Unit,
-    onRetryLikes: () -> Unit,
-    onLoadMoreLikes: () -> Unit,
-    onPlayLike: (ShortVideo) -> Unit,
     onRetryCollections: () -> Unit,
     onLoadMoreCollections: () -> Unit,
     onPlayCollection: (VideoCollection) -> Unit,
@@ -225,15 +243,25 @@ fun AuthorProfileSidebar(
     var selectedTab by remember(profile?.nickname ?: fallbackName) {
         mutableIntStateOf(0)
     }
-    val tabRequesters = remember { listOf(FocusRequester(), FocusRequester(), FocusRequester()) }
+    val showCollectionsTab = shouldShowAuthorCollectionsTab(
+        collectionsLoaded = collectionsLoaded,
+        collectionCount = collections.size,
+    )
+    val activeTab = if (showCollectionsTab && selectedTab == 1) 1 else 0
+    val tabRequesters = remember { listOf(FocusRequester(), FocusRequester()) }
     val firstVideoFocusRequester = remember { FocusRequester() }
-    val firstLikeFocusRequester = remember { FocusRequester() }
     val firstCollectionFocusRequester = remember { FocusRequester() }
-    val likingCount = maxOf(likes.size.toLong(), profile?.likingCount ?: 0L)
 
     LaunchedEffect(Unit) {
         delay(80)
         tabRequesters.first().requestFocus()
+    }
+    LaunchedEffect(showCollectionsTab) {
+        if (!showCollectionsTab && selectedTab != 0) {
+            selectedTab = 0
+            delay(40)
+            tabRequesters.first().requestFocus()
+        }
     }
 
     SidebarFrame(
@@ -262,20 +290,31 @@ fun AuthorProfileSidebar(
         }
         Spacer(Modifier.height(8.dp))
         SidebarTabs(
-            labels = listOf(
-                "视频 ${videos.size}",
-                "合集 ${collections.size}",
-                "喜欢 ${formatCount(likingCount)}",
-            ),
-            selectedIndex = selectedTab,
+            labels = buildList {
+                add("视频 ${videos.size}")
+                if (showCollectionsTab) {
+                    add(if (collectionsLoaded) "合集 ${collections.size}" else "合集")
+                }
+            },
+            selectedIndex = activeTab,
             requesters = tabRequesters,
+            downFocusRequester = when (activeTab) {
+                0 -> firstVideoFocusRequester.takeIf {
+                    videos.isNotEmpty() || (!loading && error != null)
+                }
+
+                else -> firstCollectionFocusRequester.takeIf {
+                    collections.isNotEmpty() ||
+                        (!collectionsLoading && collectionsError != null)
+                }
+            },
             onSelected = {
                 selectedTab = it
                 onTabSelected(it)
             },
         )
         Spacer(Modifier.height(7.dp))
-        when (selectedTab) {
+        when (activeTab) {
             0 -> SidebarVideoList(
                 videos = videos,
                 progressByVideoId = progressByVideoId,
@@ -285,6 +324,7 @@ fun AuthorProfileSidebar(
                 hasMore = hasMore,
                 emptyText = "博主还没有公开视频",
                 firstFocusRequester = firstVideoFocusRequester,
+                upFocusRequester = tabRequesters.first(),
                 onRetry = onRetryVideos,
                 onLoadMore = onLoadMore,
                 onPlay = onPlay,
@@ -298,23 +338,10 @@ fun AuthorProfileSidebar(
                 hasMore = collectionsHasMore,
                 openingCollectionId = openingCollectionId,
                 firstFocusRequester = firstCollectionFocusRequester,
+                upFocusRequester = tabRequesters.getOrNull(1),
                 onRetry = onRetryCollections,
                 onLoadMore = onLoadMoreCollections,
                 onPlay = onPlayCollection,
-            )
-
-            else -> SidebarVideoList(
-                videos = likes,
-                progressByVideoId = likesProgress,
-                loading = likesLoading,
-                loadingMore = likesLoadingMore,
-                error = likesError,
-                hasMore = likesHasMore,
-                emptyText = "作者喜欢的视频暂未公开",
-                firstFocusRequester = firstLikeFocusRequester,
-                onRetry = onRetryLikes,
-                onLoadMore = onLoadMoreLikes,
-                onPlay = onPlayLike,
             )
         }
     }
@@ -501,6 +528,7 @@ private fun SidebarTabs(
     labels: List<String>,
     selectedIndex: Int,
     requesters: List<FocusRequester>,
+    downFocusRequester: FocusRequester? = null,
     onSelected: (Int) -> Unit,
 ) {
     Row(
@@ -514,6 +542,7 @@ private fun SidebarTabs(
                 focusRequester = requesters.getOrNull(index),
                 previousFocusRequester = requesters.getOrNull(index - 1),
                 nextFocusRequester = requesters.getOrNull(index + 1),
+                downFocusRequester = downFocusRequester,
                 onClick = { onSelected(index) },
                 modifier = Modifier.weight(1f),
             )
@@ -528,6 +557,7 @@ private fun SidebarTab(
     focusRequester: FocusRequester?,
     previousFocusRequester: FocusRequester?,
     nextFocusRequester: FocusRequester?,
+    downFocusRequester: FocusRequester?,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -567,14 +597,28 @@ private fun SidebarTab(
             )
             .focusable()
             .onPreviewKeyEvent { event ->
-                if (
-                    (event.key == Key.DirectionCenter || event.key == Key.Enter) &&
-                    event.type == KeyEventType.KeyDown
-                ) {
-                    if (event.nativeKeyEvent.repeatCount == 0) onClick()
-                    true
-                } else {
-                    false
+                when (event.key) {
+                    Key.DirectionCenter, Key.Enter -> {
+                        if (
+                            event.type == KeyEventType.KeyDown &&
+                            event.nativeKeyEvent.repeatCount == 0
+                        ) {
+                            onClick()
+                        }
+                        true
+                    }
+
+                    Key.DirectionDown -> {
+                        if (
+                            event.type == KeyEventType.KeyDown &&
+                            event.nativeKeyEvent.repeatCount == 0
+                        ) {
+                            downFocusRequester?.requestFocus()
+                        }
+                        true
+                    }
+
+                    else -> false
                 }
             }
             .padding(vertical = 3.dp),
@@ -610,6 +654,7 @@ private fun SidebarCollectionList(
     hasMore: Boolean,
     openingCollectionId: String?,
     firstFocusRequester: FocusRequester? = null,
+    upFocusRequester: FocusRequester? = null,
     onRetry: () -> Unit,
     onLoadMore: () -> Unit,
     onPlay: (VideoCollection) -> Unit,
@@ -671,6 +716,7 @@ private fun SidebarCollectionList(
                         } else {
                             requester
                         },
+                        upFocusRequester = upFocusRequester,
                         onPlay = { onPlay(collection) },
                     )
                 }
@@ -724,6 +770,7 @@ private fun SidebarCollectionCard(
     collection: VideoCollection,
     opening: Boolean,
     focusRequester: FocusRequester,
+    upFocusRequester: FocusRequester? = null,
     onPlay: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -747,6 +794,13 @@ private fun SidebarCollectionCard(
                 elevation = if (focused) 7.dp else 2.dp,
             )
             .focusRequester(focusRequester)
+            .then(
+                if (upFocusRequester != null) {
+                    Modifier.focusProperties { up = upFocusRequester }
+                } else {
+                    Modifier
+                },
+            )
             .onFocusChanged { focused = it.isFocused }
             .focusable()
             .onPreviewKeyEvent { event ->
@@ -876,6 +930,7 @@ private fun SidebarVideoList(
     hasMore: Boolean = false,
     emptyText: String,
     firstFocusRequester: FocusRequester? = null,
+    upFocusRequester: FocusRequester? = null,
     onRetry: () -> Unit = {},
     onLoadMore: () -> Unit = {},
     onPlay: (ShortVideo) -> Unit,
@@ -938,6 +993,7 @@ private fun SidebarVideoList(
                             requester
                         },
                         onPlay = { onPlay(video) },
+                        upFocusRequester = upFocusRequester,
                     )
                 }
                 if (error != null) {
@@ -990,6 +1046,7 @@ private fun SidebarVideoCard(
     video: ShortVideo,
     progress: PlaybackProgress?,
     focusRequester: FocusRequester,
+    upFocusRequester: FocusRequester? = null,
     onPlay: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -1014,6 +1071,13 @@ private fun SidebarVideoCard(
                 elevation = if (focused) 7.dp else 2.dp,
             )
             .focusRequester(focusRequester)
+            .then(
+                if (upFocusRequester != null) {
+                    Modifier.focusProperties { up = upFocusRequester }
+                } else {
+                    Modifier
+                },
+            )
             .onFocusChanged { focused = it.isFocused }
             .focusable()
             .onPreviewKeyEvent { event ->
@@ -1117,6 +1181,8 @@ private fun SidebarVideoCard(
 @Composable
 private fun MyProfileContent(
     profile: MyProfileUiState,
+    firstFocusRequester: FocusRequester,
+    upFocusRequester: FocusRequester,
     onRetry: () -> Unit,
     onLoadMore: () -> Unit,
     onPlay: (ShortVideo) -> Unit,
@@ -1133,6 +1199,8 @@ private fun MyProfileContent(
         } else {
             "还没有发布视频"
         },
+        firstFocusRequester = firstFocusRequester,
+        upFocusRequester = upFocusRequester,
         onRetry = onRetry,
         onLoadMore = onLoadMore,
         onPlay = onPlay,

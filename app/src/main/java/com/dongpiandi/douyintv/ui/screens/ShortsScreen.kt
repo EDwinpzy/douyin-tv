@@ -146,7 +146,7 @@ fun ShortsScreen(
     val performanceProfile = remember(context) {
         DevicePerformanceProfile.detect(context)
     }
-    val playbackEngine = remember(context, performanceProfile) {
+    val playbackEngine = remember(context, performanceProfile, isLoggedIn) {
         ShortsPlaybackEngine(
             context = context,
             preloadForwardCount = performanceProfile.preloadForwardCount,

@@ -15,6 +15,7 @@ import androidx.media3.exoplayer.source.preload.TargetPreloadStatusControl
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.exoplayer.upstream.DefaultAllocator
 import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
+import com.dongpiandi.douyintv.data.SessionStore
 import com.dongpiandi.douyintv.model.ShortVideo
 import com.dongpiandi.douyintv.network.DouyinMediaSourceFactory
 
@@ -34,6 +35,7 @@ internal class ShortsPlaybackEngine(
     private val mediaSourceFactory = DouyinMediaSourceFactory.create(
         context = appContext,
         referer = DOUYIN_REFERER,
+        cookieHeader = SessionStore(appContext).cookieHeader(),
     )
     private val managedItems = linkedMapOf<String, ManagedItem>()
     private var currentIndex = C.INDEX_UNSET
