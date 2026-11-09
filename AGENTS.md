@@ -8,7 +8,7 @@
 - **Static check:** `.\gradlew.bat :app:lintDebug`
 - **Public repository:** `https://github.com/EDwinpzy/douyin-tv`（`origin`）
 - **Generated / ignored:** `.gradle/`, `.kotlin/`, `**/build/`, `local.properties`, `captures/`, `research/`, `screenshots/`
-- **Release / signing gate:** 未配置 release 签名；不得生成或分发生产包，签名材料与 APK/AAB 不入库
+- **Release / signing gate:** release 签名材料存放于仓库外（`%USERPROFILE%\.android\douyintv-release`），通过 `DOUYINTV_KEYSTORE_PROPERTIES` 或根目录 `keystore.properties` 注入；签名材料与 APK/AAB 不入库
 - **Do not modify:** `main` 发布历史、`app/build/`、Android Keystore 导出材料、任何密钥或 Cookie
 
 ## Project boundaries
