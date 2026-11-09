@@ -192,6 +192,7 @@ data class AppUiState(
     val search: SearchUiState = SearchUiState(),
     val live: LiveListUiState = LiveListUiState(),
     val livePlayer: LivePlayerUiState? = null,
+    val recommendationReturn: ShortsUiState? = null,
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -515,6 +516,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (!sameAuthor || _state.value.authorVideos.profile == null) {
             loadAuthorProfile(video.authorSecUid)
         }
+        if (!sameAuthor || !_state.value.authorVideos.collectionsLoaded) {
+            loadAuthorCollectionsPage(reset = true)
+        }
     }
 
     fun closeAuthorVideos() {
@@ -524,6 +528,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 authorVideos = it.authorVideos.copy(
                     visible = false,
                 ),
+            )
+        }
+    }
+
+    fun returnToRecommendation() {
+        val saved = _state.value.recommendationReturn
+        if (saved == null) {
+            _state.update { it.copy(overlayVisible = true) }
+            loadShorts(reset = true)
+            return
+        }
+        _state.update {
+            it.copy(
+                overlayVisible = true,
+                accountMenuVisible = false,
+                authorVideos = it.authorVideos.copy(visible = false),
+                search = it.search.copy(visible = false),
+                engagement = EngagementUiState(),
+                shorts = saved.copy(paused = false, error = null),
+                recommendationReturn = null,
             )
         }
     }
@@ -549,10 +573,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         when (index) {
             1 -> if (!state.collectionsLoaded && !state.collectionsLoading) {
                 loadAuthorCollectionsPage(reset = true)
-            }
-
-            2 -> if (!state.likesLoaded && !state.likesLoading) {
-                loadAuthorLikes(reset = true)
             }
         }
     }
@@ -1560,6 +1580,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 accountMenuVisible = false,
                 authorVideos = it.authorVideos.copy(visible = false),
                 search = it.search.copy(visible = false),
+                recommendationReturn = recommendationReturnAfterPlayback(
+                    currentShorts = it.shorts,
+                    existingReturn = it.recommendationReturn,
+                    nextSource = source,
+                ),
                 shorts = it.shorts.copy(
                     videos = ordered,
                     index = index,
@@ -1629,6 +1654,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val nextPage = if (reset) 1 else snapshot.page + 1
                 _state.update {
                     it.copy(
+                        recommendationReturn = if (reset) {
+                            null
+                        } else {
+                            it.recommendationReturn
+                        },
                         shorts = it.shorts.copy(
                             loading = true,
                             error = null,

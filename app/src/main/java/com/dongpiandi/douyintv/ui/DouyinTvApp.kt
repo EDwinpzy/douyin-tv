@@ -85,6 +85,8 @@ fun DouyinTvApp(viewModel: MainViewModel) {
                 state.tab == MainTab.SHORTS && state.engagement.visible ->
                     viewModel.closeComments()
                 state.tab == MainTab.SHORTS && state.overlayVisible -> viewModel.hideOverlay()
+                state.tab == MainTab.SHORTS && state.shorts.source.isSidebarPlayback ->
+                    viewModel.returnToRecommendation()
                 else -> {
                     val now = SystemClock.elapsedRealtime()
                     val shouldExit = lastExitBackAtMs > 0L &&
@@ -228,13 +230,8 @@ fun DouyinTvApp(viewModel: MainViewModel) {
                 loadingMore = state.authorVideos.loadingMore,
                 error = state.authorVideos.error,
                 hasMore = state.authorVideos.hasMore,
-                likes = state.authorVideos.likes,
-                likesProgress = state.authorVideos.likesProgress,
-                likesLoading = state.authorVideos.likesLoading,
-                likesLoadingMore = state.authorVideos.likesLoadingMore,
-                likesError = state.authorVideos.likesError,
-                likesHasMore = state.authorVideos.likesHasMore,
                 collections = state.authorVideos.collections,
+                collectionsLoaded = state.authorVideos.collectionsLoaded,
                 collectionsLoading = state.authorVideos.collectionsLoading,
                 collectionsLoadingMore = state.authorVideos.collectionsLoadingMore,
                 collectionsError = state.authorVideos.collectionsError,
@@ -246,9 +243,6 @@ fun DouyinTvApp(viewModel: MainViewModel) {
                 onRetryVideos = viewModel::retryAuthorVideos,
                 onLoadMore = viewModel::loadMoreAuthorVideos,
                 onPlay = viewModel::playAuthorVideo,
-                onRetryLikes = viewModel::retryAuthorLikes,
-                onLoadMoreLikes = viewModel::loadMoreAuthorLikes,
-                onPlayLike = viewModel::playAuthorLike,
                 onRetryCollections = viewModel::retryAuthorCollections,
                 onLoadMoreCollections = viewModel::loadMoreAuthorCollections,
                 onPlayCollection = viewModel::playAuthorCollection,
