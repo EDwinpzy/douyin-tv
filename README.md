@@ -192,7 +192,7 @@ douyinTV/
 | 真实手机扫码与登录完成 | NOT_RUN | 本次未重新执行扫码、Cookie 持久化、退出登录全流程 |
 | 实体遥控器与 OEM 长按 | NOT_RUN | S621 使用 ADB 按键注入，不等于硬件遥控器证据 |
 | 投影仪本轮复测 | NOT_RUN | 按用户要求本轮只做电脑模拟器验证，未连接投影仪 |
-| Release 签名与生产包 | PASS | `0.2.0 (versionCode 2)` 使用仓库外专用 keystore 签名，apksigner 校验 v2/v3 通过；Release APK 与 AAB 均产出 |
+| Release 签名与生产包 | PASS | `0.2.1 (versionCode 3)` 使用仓库外专用 keystore 签名，apksigner 校验 v2/v3 通过；Release APK 与 AAB 均产出 |
 | 长时间播放、弱网、并发切换 | NOT_RUN | 尚无持续运行与网络扰动测试 |
 
 ## 已知限制
