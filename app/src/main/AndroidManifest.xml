@@ -43,6 +43,19 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".voice.VoiceEntryActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <provider
+            android:name=".voice.VoiceCommandProvider"
+            android:authorities="com.dongpiandi.douyintv.voice.commands"
+            android:exported="true"
+            android:grantUriPermissions="false" />
     </application>
 
 </manifest>

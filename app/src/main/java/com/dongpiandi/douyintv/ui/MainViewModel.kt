@@ -14,6 +14,8 @@ import com.dongpiandi.douyintv.model.ShortComment
 import com.dongpiandi.douyintv.model.ShortVideo
 import com.dongpiandi.douyintv.model.UserProfile
 import com.dongpiandi.douyintv.model.VideoCollection
+import com.dongpiandi.douyintv.voice.DouyinVoiceCommand
+import com.dongpiandi.douyintv.voice.DouyinVoiceOperation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -217,6 +219,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val shortsLoadMutex = Mutex()
     private var engagementJob: Job? = null
     private var searchJob: Job? = null
+    private var pendingVoiceOpenQuery: String? = null
     private val progressCommands = Channel<PlaybackProgressCommand>(capacity = 32)
 
     private val _state = MutableStateFlow(
@@ -247,6 +250,71 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (sessionStore.hasSession()) {
             loadFavorites(reset = true)
         }
+    }
+
+    internal fun applyVoiceCommand(command: DouyinVoiceCommand): Boolean {
+        if (command.operation == DouyinVoiceOperation.SEARCH) {
+            startVoiceSearch(command.query, command.openFirstResult)
+            return command.query.isNotBlank()
+        }
+
+        val current = _state.value
+        val video = current.shorts.current ?: return false
+        if (current.tab != MainTab.SHORTS) return false
+        return when (command.operation) {
+            DouyinVoiceOperation.PLAY -> {
+                setShortPaused(false)
+                true
+            }
+            DouyinVoiceOperation.PAUSE -> {
+                setShortPaused(true)
+                true
+            }
+            DouyinVoiceOperation.NEXT -> {
+                nextShort()
+                true
+            }
+            DouyinVoiceOperation.PREVIOUS -> {
+                previousShort()
+                true
+            }
+            DouyinVoiceOperation.COMMENT -> {
+                openComments(video)
+                true
+            }
+            DouyinVoiceOperation.FAVORITE -> {
+                setFavorite(video, shouldFavorite = true)
+                true
+            }
+            DouyinVoiceOperation.UNFAVORITE -> {
+                setFavorite(video, shouldFavorite = false)
+                true
+            }
+            DouyinVoiceOperation.AUTHOR -> {
+                openAuthorVideos(video)
+                true
+            }
+            DouyinVoiceOperation.SEARCH -> false
+        }
+    }
+
+    private fun startVoiceSearch(
+        query: String,
+        openFirstResult: Boolean,
+    ) {
+        val normalized = query.trim().take(80)
+        if (normalized.isEmpty()) return
+        pendingVoiceOpenQuery = normalized.takeIf { openFirstResult }
+        _state.update {
+            it.copy(
+                tab = MainTab.SHORTS,
+                livePlayer = null,
+                loginVisible = false,
+            )
+        }
+        openSearch()
+        updateSearchQuery(normalized)
+        submitSearch()
     }
 
     fun showOverlay() {
@@ -399,13 +467,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun toggleFavorite(video: ShortVideo) {
+        setFavorite(
+            video = video,
+            shouldFavorite = video.id !in _state.value.favorites.ids,
+        )
+    }
+
+    private fun setFavorite(
+        video: ShortVideo,
+        shouldFavorite: Boolean,
+    ) {
         val current = _state.value
         if (!current.isLoggedIn) {
             openLogin()
             return
         }
         if (video.id in current.favorites.pendingIds) return
-        val shouldFavorite = video.id !in current.favorites.ids
+        if ((video.id in current.favorites.ids) == shouldFavorite) return
         _state.update {
             it.copy(
                 favorites = it.favorites.copy(
@@ -745,12 +823,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun closeSearch() {
+        pendingVoiceOpenQuery = null
         _state.update {
             it.copy(search = it.search.copy(visible = false))
         }
     }
 
     fun updateSearchQuery(query: String) {
+        if (pendingVoiceOpenQuery != null && query.trim() != pendingVoiceOpenQuery) {
+            pendingVoiceOpenQuery = null
+        }
         _state.update {
             it.copy(search = it.search.copy(query = query.take(80), error = null))
         }
@@ -1620,6 +1702,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 ),
                             )
                         }
+                    }
+                    val latest = _state.value
+                    val firstResult = latest.search.results.firstOrNull()
+                    if (
+                        reset &&
+                        !page.verificationRequired &&
+                        latest.search.submittedQuery == query &&
+                        pendingVoiceOpenQuery == query &&
+                        firstResult != null
+                    ) {
+                        pendingVoiceOpenQuery = null
+                        playSearchResult(firstResult)
                     }
                 }
                 .onFailure { error ->
