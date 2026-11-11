@@ -15,7 +15,7 @@ Douyin TV 是一个原生 Android TV 客户端：短视频和直播画面由 Med
 MainActivity
   └─ DouyinTvApp
       ├─ ShortsScreen          Compose + PlayerView + ShortsPlaybackEngine
-      │   ├─ DanmakuOverlay    三轨弹幕画布
+      │   ├─ DanmakuOverlay    五轨弹幕画布
       │   └─ CommentsPanel     右侧评论抽屉
       ├─ MyHomeSidebar         右侧账号主页：观看历史 / 收藏 / 本人作品
       ├─ AuthorProfileSidebar  右侧博主主页：视频 / 合集（无公开合集时隐藏）
@@ -40,7 +40,7 @@ MainActivity
 | `ui/screens/ShortsPreloadPolicy.kt` | 预载窗口与分级缓冲时长 |
 | `ui/screens/ShortsQueuePolicy.kt` | 播放队列的复用、追加与重建判定 |
 | `performance/DevicePerformanceProfile.kt` | 内存/ABI 分档、弹幕刷新、进度写入与预载参数 |
-| `ui/components/DanmakuOverlay.kt` | 跟随播放器时间轴的三轨弹幕 |
+| `ui/components/DanmakuOverlay.kt` | 跟随播放器时间轴的五轨弹幕 |
 | `ui/components/CommentsPanel.kt` | 评论列表、焦点滚动与返回 |
 | `ui/screens/LiveScreens.kt` | 响应式直播网格、直播间播放 |
 | `ui/screens/LoginScreen.kt` | 官方登录页、二维码探测、弹层校正 |
@@ -103,11 +103,11 @@ MainActivity
    热门评论，包括正文、作者、IP 属地、点赞数和回复数。
 2. 评论列表的每一行都是稳定焦点目标，上下键逐条移动并自动滚入可视区；Back 或
    右上角关闭按钮退出面板。
-3. 官方弹幕通过桌面网页接口请求，按播放器 `currentPosition` 投影到三条轨道；
+3. 官方弹幕通过桌面网页接口分页请求，按播放器 `currentPosition` 投影到五条轨道；
    没有官方时间轴弹幕的视频保持空白，不使用评论补位。
-4. 每条轨道同一时刻只绘制一条消息，使用大字号、慢速、无底色文字，消息完整滚出
+4. 每条轨道同一时刻只绘制一条消息，使用大字号、中速、无底色文字，消息完整滚出
    左侧后才复用轨道；轨道仍被占用时跳过冲突的新消息，不覆盖正在滚动的弹幕。
-5. 弹幕区固定为屏幕最顶部约 15% 高度并收紧行距。评论面板打开时整体隐藏；打开
+5. 弹幕区固定为屏幕最顶部约 22% 高度并收紧行距。评论面板打开时整体隐藏；打开
    我的主页或博主侧栏时继续滚动，只覆盖左侧视频区域。
 
 ## 直播链路
@@ -187,7 +187,7 @@ MainActivity
 
 - 登录页使用左右两栏，二维码 WebView 弹层在可用区域内垂直居中。
 - 短视频底部信息面板最大 `280.dp`，且不超过屏幕宽度的 28%，不再放置遥控操作提示。
-- 弹幕区从屏幕最顶部开始，固定占用约 15% 高度，三行行距收紧；评论面板打开时隐藏，
+- 弹幕区从屏幕最顶部开始，固定占用约 22% 高度，五行行距收紧；评论面板打开时隐藏，
   我的主页或博主侧栏打开时继续滚动并限制在左侧视频区。弹幕只使用带原始时间偏移的
   官方数据，严格按播放进度显示；没有弹幕的时间段保持空白，不循环或用评论补位。
 - 推荐页顶栏使用独立玻璃胶囊按钮，不再绘制整条深色背景；推荐、直播、评论、收藏、

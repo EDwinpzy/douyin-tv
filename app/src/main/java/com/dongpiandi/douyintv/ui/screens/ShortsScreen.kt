@@ -100,7 +100,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
 
 private const val OVERLAY_AUTO_HIDE_DELAY_MS = 4_000L
-private const val DANMAKU_HEIGHT_FRACTION = 0.15f
+private const val DANMAKU_HEIGHT_FRACTION = 0.22f
 private const val RAPID_SWITCH_WINDOW_MS = 280L
 private const val RAPID_SWITCH_SETTLE_MS = 220L
 private const val SEEK_STEP_MS = 5_000L
