@@ -6,7 +6,7 @@ import org.junit.Test
 
 class DanmakuScheduleTest {
     @Test
-    fun defaultsToThreeVisibleLanes() {
+    fun defaultsToFiveVisibleLanes() {
         val messages = List(6) { index ->
             DanmakuMessage(
                 id = "danmaku-$index",
@@ -17,8 +17,8 @@ class DanmakuScheduleTest {
 
         val lanes = scheduleDanmaku(messages)
 
-        assertEquals(3, lanes.size)
-        assertEquals(3, lanes.sumOf { lane -> lane.size })
+        assertEquals(5, lanes.size)
+        assertEquals(5, lanes.sumOf { lane -> lane.size })
     }
 
     @Test

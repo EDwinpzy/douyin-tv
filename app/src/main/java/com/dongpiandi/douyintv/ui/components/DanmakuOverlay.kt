@@ -20,8 +20,8 @@ import androidx.media3.common.Player
 import com.dongpiandi.douyintv.model.DanmakuMessage
 import kotlinx.coroutines.delay
 
-private const val LANE_COUNT = 3
-private const val TRAVEL_DURATION_MS = 18_000L
+private const val LANE_COUNT = 5
+private const val TRAVEL_DURATION_MS = 12_000L
 private const val DEFAULT_REFRESH_INTERVAL_MS = 33L
 
 internal data class ScheduledDanmaku(

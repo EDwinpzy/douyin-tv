@@ -13,11 +13,17 @@ import com.dongpiandi.douyintv.model.ShortVideo
 import com.dongpiandi.douyintv.model.UserProfile
 import com.dongpiandi.douyintv.model.VideoCollection
 import com.dongpiandi.douyintv.model.VideoPage
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.intOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -104,23 +110,100 @@ class DouyinApi(
     ): List<DanmakuMessage> = withContext(Dispatchers.IO) {
         if (itemId.isBlank() || durationMs <= 0) return@withContext emptyList()
         ensureTtwid()
-        val params = commonWebParams()
-            .add("item_id", itemId)
-            .add("duration", durationMs)
-            .add("start_time", 0)
-            .add("end_time", (durationMs - 1).coerceAtLeast(0))
-            .add("danmaku_switch_status", 1)
-        val request = requestBuilder(
-            url = "$WEB_HOST/aweme/v1/web/danmaku/get_v2/?${params.sign(signer)}",
-            referer = "$WEB_HOST/video/$itemId",
-        ).get().build()
-        val response = json.decodeFromString<DanmakuListResponse>(executeText(request))
-        if (response.status_code != 0) {
-            throw ApiException(response.status_msg ?: "弹幕接口返回 ${response.status_code}")
+        val listMessages = try {
+            loadDanmakuList(itemId, durationMs)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            emptyList()
         }
-        response.danmaku_list.orEmpty()
-            .mapNotNull(::mapDanmaku)
-            .sortedBy(DanmakuMessage::offsetMs)
+        if (listMessages.isNotEmpty()) return@withContext listMessages
+        loadDanmakuByTimeWindow(itemId, durationMs)
+    }
+
+    private suspend fun loadDanmakuList(
+        itemId: String,
+        durationMs: Long,
+    ): List<DanmakuMessage> {
+        val collected = linkedMapOf<String, DanmakuMessage>()
+        var offset = 0
+        var page = 0
+        while (page < DANMAKU_MAX_PAGES) {
+            val params = commonWebParams()
+                .add("app_name", "aweme")
+                .add("format", "json")
+                .add("group_id", itemId)
+                .add("item_id", itemId)
+                .add("offset", offset)
+                .add("count", DANMAKU_LIST_PAGE_SIZE)
+            val request = requestBuilder(
+                url = "$WEB_HOST/aweme/v1/web/danmaku/list/?${params.sign(signer)}",
+                referer = "$WEB_HOST/video/$itemId",
+            ).get().build()
+            val response = json.decodeFromString<DanmakuListResponse>(executeText(request))
+            if (response.status_code != 0) {
+                throw ApiException(
+                    response.status_msg ?: "弹幕列表接口返回 ${response.status_code}",
+                )
+            }
+            val entries = response.danmaku_list.orEmpty()
+            val before = collected.size
+            entries.mapNotNull(::mapDanmaku).forEach { message ->
+                if (message.offsetMs <= durationMs) {
+                    collected.putIfAbsent(message.id, message)
+                }
+            }
+            val added = collected.size - before
+            val hasMore = response.has_more.asHasMore()
+            if (!hasMore || entries.isEmpty()) break
+            if (added == 0 && page > 0) break
+            offset += DANMAKU_LIST_PAGE_SIZE
+            page += 1
+            if (page < DANMAKU_MAX_PAGES) delay(DANMAKU_PAGE_DELAY_MS)
+        }
+        return collected.values.sortedBy(DanmakuMessage::offsetMs)
+    }
+
+    private suspend fun loadDanmakuByTimeWindow(
+        itemId: String,
+        durationMs: Long,
+    ): List<DanmakuMessage> {
+        val collected = linkedMapOf<String, DanmakuMessage>()
+        var startTimeMs = 0L
+        var page = 0
+        while (startTimeMs < durationMs && page < DANMAKU_MAX_PAGES) {
+            val params = commonWebParams()
+                .add("item_id", itemId)
+                .add("duration", durationMs)
+                .add("start_time", startTimeMs)
+                .add("end_time", (durationMs - 1).coerceAtLeast(0))
+                .add("danmaku_switch_status", 1)
+            val request = requestBuilder(
+                url = "$WEB_HOST/aweme/v1/web/danmaku/get_v2/?${params.sign(signer)}",
+                referer = "$WEB_HOST/video/$itemId",
+            ).get().build()
+            val response = json.decodeFromString<DanmakuListResponse>(executeText(request))
+            if (response.status_code != 0) {
+                throw ApiException(
+                    response.status_msg ?: "弹幕接口返回 ${response.status_code}",
+                )
+            }
+            val entries = response.danmaku_list.orEmpty()
+            entries.mapNotNull(::mapDanmaku).forEach { message ->
+                if (message.offsetMs <= durationMs) {
+                    collected.putIfAbsent(message.id, message)
+                }
+            }
+            val maxOffsetMs = entries.maxOfOrNull { it.offset_time } ?: break
+            if (response.total > 0L && collected.size >= response.total) break
+            if (maxOffsetMs >= durationMs - 1) break
+            val nextStartTimeMs = maxOffsetMs + 1
+            if (nextStartTimeMs <= startTimeMs) break
+            startTimeMs = nextStartTimeMs
+            page += 1
+            if (page < DANMAKU_MAX_PAGES) delay(DANMAKU_PAGE_DELAY_MS)
+        }
+        return collected.values.sortedBy(DanmakuMessage::offsetMs)
     }
 
     suspend fun loadFavoriteVideos(
@@ -761,6 +844,9 @@ class DouyinApi(
     }
 
     companion object {
+        private const val DANMAKU_MAX_PAGES = 200
+        private const val DANMAKU_LIST_PAGE_SIZE = 200
+        private const val DANMAKU_PAGE_DELAY_MS = 80L
         const val USER_AGENT =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
                 "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
@@ -769,6 +855,15 @@ class DouyinApi(
         private const val LIVE_HOST = "https://live.douyin.com"
         private val FORM_MEDIA_TYPE = "application/x-www-form-urlencoded".toMediaType()
     }
+}
+
+internal fun JsonElement?.asHasMore(): Boolean {
+    val primitive = this as? JsonPrimitive ?: return false
+    if (primitive.isString) {
+        return primitive.content == "1" ||
+            primitive.content.equals("true", ignoreCase = true)
+    }
+    return primitive.booleanOrNull == true || primitive.intOrNull == 1
 }
 
 class ApiException(message: String) : Exception(message)

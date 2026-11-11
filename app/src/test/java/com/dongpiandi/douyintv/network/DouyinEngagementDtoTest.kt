@@ -3,6 +3,7 @@ package com.dongpiandi.douyintv.network
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DouyinEngagementDtoTest {
@@ -70,6 +71,27 @@ class DouyinEngagementDtoTest {
         assertEquals("弹幕内容", danmaku.text)
         assertEquals(1200L, danmaku.offset_time)
         assertFalse(danmaku.danmaku_id.isBlank())
+    }
+
+    @Test
+    fun parsesDanmakuHasMoreInNumericBooleanAndStringForms() {
+        listOf("1", "true", "\"1\"", "\"true\"").forEach { value ->
+            assertTrue(Json.parseToJsonElement(value).asHasMore())
+        }
+        listOf("0", "false", "\"0\"", "\"false\"").forEach { value ->
+            assertFalse(Json.parseToJsonElement(value).asHasMore())
+        }
+        assertFalse(null.asHasMore())
+        assertTrue(
+            json.decodeFromString<DanmakuListResponse>("""{"has_more":1}""")
+                .has_more
+                .asHasMore(),
+        )
+        assertTrue(
+            json.decodeFromString<DanmakuListResponse>("""{"has_more":true}""")
+                .has_more
+                .asHasMore(),
+        )
     }
 
     @Test

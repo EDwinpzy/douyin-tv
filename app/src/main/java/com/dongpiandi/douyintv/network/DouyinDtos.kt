@@ -2,6 +2,7 @@ package com.dongpiandi.douyintv.network
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
+import kotlinx.serialization.json.JsonElement
 
 @Serializable
 data class ChannelFeedResponse(
@@ -224,6 +225,7 @@ data class DanmakuListResponse(
     val status_code: Int = 0,
     val status_msg: String? = null,
     val total: Long = 0,
+    val has_more: JsonElement? = null,
     val danmaku_list: List<DanmakuDto>? = null,
 )
 
