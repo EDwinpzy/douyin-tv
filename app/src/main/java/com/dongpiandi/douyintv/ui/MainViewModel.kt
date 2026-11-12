@@ -117,6 +117,12 @@ data class FavoritesUiState(
     val resumeOnClose: Boolean = false,
 )
 
+data class FollowUiState(
+    val statusByAuthor: Map<String, Boolean> = emptyMap(),
+    val pendingAuthors: Set<String> = emptySet(),
+    val error: String? = null,
+)
+
 data class AuthorVideosUiState(
     val visible: Boolean = false,
     val authorSecUid: String = "",
@@ -201,6 +207,7 @@ data class AppUiState(
     val shorts: ShortsUiState = ShortsUiState(),
     val engagement: EngagementUiState = EngagementUiState(),
     val favorites: FavoritesUiState = FavoritesUiState(),
+    val follows: FollowUiState = FollowUiState(),
     val history: List<PlaybackHistoryEntry> = emptyList(),
     val myProfile: MyProfileUiState = MyProfileUiState(),
     val authorVideos: AuthorVideosUiState = AuthorVideosUiState(),
@@ -471,6 +478,70 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             video = video,
             shouldFavorite = video.id !in _state.value.favorites.ids,
         )
+    }
+
+    fun toggleFollow(video: ShortVideo) {
+        val current = _state.value
+        if (!current.isLoggedIn) {
+            openLogin()
+            return
+        }
+        val authorKey = video.authorSecUid.ifBlank { video.authorUid }
+        if (authorKey.isBlank() || authorKey in current.follows.pendingAuthors) return
+        val isFollowing = current.follows.statusByAuthor[authorKey]
+            ?: (video.authorFollowStatus > 0)
+        val shouldFollow = !isFollowing
+        _state.update {
+            it.copy(
+                follows = it.follows.copy(
+                    pendingAuthors = it.follows.pendingAuthors + authorKey,
+                    error = null,
+                ),
+            )
+        }
+        viewModelScope.launch {
+            runCatching {
+                api.setFollow(
+                    authorUid = video.authorUid,
+                    authorSecUid = video.authorSecUid,
+                    follow = shouldFollow,
+                )
+            }
+                .onSuccess { followed ->
+                    _state.update { state ->
+                        val profile = state.authorVideos.profile
+                        val updateProfile = state.authorVideos.authorSecUid ==
+                            video.authorSecUid && profile != null
+                        state.copy(
+                            follows = state.follows.copy(
+                                statusByAuthor = state.follows.statusByAuthor +
+                                    (authorKey to followed),
+                                pendingAuthors = state.follows.pendingAuthors - authorKey,
+                                error = null,
+                            ),
+                            authorVideos = if (updateProfile) {
+                                state.authorVideos.copy(
+                                    profile = profile.copy(
+                                        followStatus = if (followed) 1 else 0,
+                                    ),
+                                )
+                            } else {
+                                state.authorVideos
+                            },
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    _state.update {
+                        it.copy(
+                            follows = it.follows.copy(
+                                pendingAuthors = it.follows.pendingAuthors - authorKey,
+                                error = error.toDisplayMessage("关注操作失败"),
+                            ),
+                        )
+                    }
+                }
+        }
     }
 
     private fun setFavorite(
@@ -1223,6 +1294,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 accountMenuVisible = false,
                 loginVisible = false,
                 favorites = FavoritesUiState(),
+                follows = FollowUiState(),
                 myProfile = MyProfileUiState(),
                 authorVideos = AuthorVideosUiState(),
                 search = SearchUiState(),
@@ -1428,7 +1500,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         if (it.authorVideos.authorSecUid != authorSecUid) {
                             it
                         } else {
+                            val authorKey = profile.secUid.ifBlank { profile.uid }
                             it.copy(
+                                follows = if (
+                                    authorKey.isBlank() ||
+                                    authorKey in it.follows.pendingAuthors
+                                ) {
+                                    it.follows
+                                } else {
+                                    it.follows.copy(
+                                        statusByAuthor = it.follows.statusByAuthor +
+                                            (authorKey to (profile.followStatus > 0)),
+                                    )
+                                },
                                 authorVideos = it.authorVideos.copy(
                                     profile = profile,
                                     profileLoading = false,

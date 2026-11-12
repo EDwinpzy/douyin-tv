@@ -163,4 +163,40 @@ class DouyinDiscoveryDtoTest {
 
         assertEquals(286L, response.user?.favoriting_count)
     }
+
+    @Test
+    fun parsesAuthorFollowMetadata() {
+        val feed = json.decodeFromString<ChannelFeedResponse>(
+            """
+            {
+              "status_code": 0,
+              "aweme_list": [
+                {
+                  "aweme_id": "follow-1",
+                  "author": {
+                    "nickname": "作者",
+                    "uid": "uid-author",
+                    "sec_uid": "MS4wLjABAAAA-author",
+                    "follow_status": 2
+                  },
+                  "video": {
+                    "play_addr": {
+                      "url_list": ["https://example.com/follow.mp4"]
+                    }
+                  }
+                }
+              ]
+            }
+            """.trimIndent(),
+        )
+
+        val author = feed.aweme_list.single().author
+        assertEquals("uid-author", author?.uid)
+        assertEquals(2, author?.follow_status)
+
+        val followAction = json.decodeFromString<FollowUserResponse>(
+            """{"status_code":0,"follow_status":1}""",
+        )
+        assertEquals(1, followAction.follow_status)
+    }
 }

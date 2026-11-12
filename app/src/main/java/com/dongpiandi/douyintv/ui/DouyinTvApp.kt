@@ -167,6 +167,10 @@ fun DouyinTvApp(viewModel: MainViewModel) {
                     favoriteIds = state.favorites.ids,
                     favoritePendingIds = state.favorites.pendingIds,
                     onToggleFavorite = viewModel::toggleFavorite,
+                    followStatusByAuthor = state.follows.statusByAuthor,
+                    followPendingAuthors = state.follows.pendingAuthors,
+                    followError = state.follows.error,
+                    onToggleFollow = viewModel::toggleFollow,
                     onOpenAuthor = viewModel::openAuthorVideos,
                     onPlaybackProgress = viewModel::recordPlaybackProgress,
                 )

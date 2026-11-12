@@ -25,8 +25,10 @@ data class AwemeDto(
 @Serializable
 data class AuthorDto(
     val nickname: String = "",
+    val uid: String = "",
     val sec_uid: String = "",
     val avatar_thumb: UrlListDto? = null,
+    val follow_status: Int = 0,
 )
 
 @Serializable
@@ -39,6 +41,7 @@ data class UserProfileResponse(
 @Serializable
 data class UserProfileDto(
     val nickname: String = "",
+    val uid: String = "",
     val unique_id: String = "",
     val sec_uid: String = "",
     val short_id: String = "",
@@ -48,6 +51,7 @@ data class UserProfileDto(
     val total_favorited: Long = 0,
     val favoriting_count: Long = 0,
     val signature: String = "",
+    val follow_status: Int = 0,
 )
 
 @Serializable
@@ -180,6 +184,13 @@ data class SearchItemDto(
 data class FavoriteActionResponse(
     val status_code: Int = 0,
     val status_msg: String? = null,
+)
+
+@Serializable
+data class FollowUserResponse(
+    val status_code: Int = 0,
+    val status_msg: String? = null,
+    val follow_status: Int? = null,
 )
 
 @Serializable

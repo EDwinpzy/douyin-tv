@@ -13,6 +13,8 @@ data class ShortVideo(
     val durationMs: Long,
     val likeCount: Long,
     val commentCount: Long,
+    val authorUid: String = "",
+    val authorFollowStatus: Int = 0,
 ) {
     val aspectRatio: Float?
         get() = if (videoWidth > 0 && videoHeight > 0) {
@@ -85,6 +87,8 @@ data class UserProfile(
     val totalFavorited: Long,
     val likingCount: Long,
     val signature: String,
+    val uid: String = "",
+    val followStatus: Int = 0,
 )
 
 data class LiveRoom(

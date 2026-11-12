@@ -146,6 +146,8 @@ class PlaybackProgressStore(context: Context) {
         val durationMs: Long = 0,
         val likeCount: Long = 0,
         val commentCount: Long = 0,
+        val authorUid: String = "",
+        val authorFollowStatus: Int = 0,
     ) {
         fun toShortVideo(): ShortVideo? {
             if (id.isBlank() || playUrls.isEmpty()) return null
@@ -162,6 +164,8 @@ class PlaybackProgressStore(context: Context) {
                 durationMs = durationMs,
                 likeCount = likeCount,
                 commentCount = commentCount,
+                authorUid = authorUid,
+                authorFollowStatus = authorFollowStatus,
             )
         }
 
@@ -179,6 +183,8 @@ class PlaybackProgressStore(context: Context) {
                 durationMs = video.durationMs,
                 likeCount = video.likeCount,
                 commentCount = video.commentCount,
+                authorUid = video.authorUid,
+                authorFollowStatus = video.authorFollowStatus,
             )
         }
     }

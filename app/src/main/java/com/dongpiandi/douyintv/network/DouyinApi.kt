@@ -266,6 +266,41 @@ class DouyinApi(
         }
     }
 
+    suspend fun setFollow(
+        authorUid: String,
+        authorSecUid: String,
+        follow: Boolean,
+    ): Boolean = withContext(Dispatchers.IO) {
+        if (authorUid.isBlank() && authorSecUid.isBlank()) {
+            throw ApiException("作者信息不完整")
+        }
+        val targetUid = authorUid.trim().ifBlank {
+            loadAuthorProfile(authorSecUid).uid.trim()
+        }
+        if (targetUid.isBlank()) {
+            throw ApiException("作者信息不完整")
+        }
+        ensureTtwid()
+        val body = SignedParams()
+            .add("user_id", targetUid)
+            .add("type", if (follow) 1 else 2)
+            .encoded()
+        val params = commonWebParams()
+        val request = requestBuilder(
+            url = "$WEB_HOST/aweme/v1/web/commit/follow/user/?" +
+                params.sign(signer),
+            referer = "$WEB_HOST/user/${authorSecUid.ifBlank { targetUid }}",
+        )
+            .header("Origin", WEB_HOST)
+            .post(body.toRequestBody(FORM_MEDIA_TYPE))
+            .build()
+        val response = json.decodeFromString<FollowUserResponse>(executeText(request))
+        if (response.status_code != 0) {
+            throw ApiException(response.status_msg ?: "关注操作返回 ${response.status_code}")
+        }
+        response.follow_status?.let { it > 0 } ?: follow
+    }
+
     suspend fun loadAuthorVideos(
         authorSecUid: String,
         cursor: Long = 0,
@@ -743,6 +778,8 @@ class DouyinApi(
             durationMs = dto.video?.duration ?: 0,
             likeCount = dto.statistics?.digg_count ?: 0,
             commentCount = dto.statistics?.comment_count ?: 0,
+            authorUid = dto.author?.uid.orEmpty().trim(),
+            authorFollowStatus = dto.author?.follow_status ?: 0,
         )
     }
 
@@ -783,6 +820,8 @@ class DouyinApi(
         totalFavorited = dto.total_favorited,
         likingCount = dto.favoriting_count,
         signature = dto.signature.trim(),
+        uid = dto.uid.trim(),
+        followStatus = dto.follow_status,
     )
 
     private fun mapComment(dto: CommentDto): ShortComment? {

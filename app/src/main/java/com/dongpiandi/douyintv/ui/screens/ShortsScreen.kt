@@ -5,6 +5,7 @@ package com.dongpiandi.douyintv.ui.screens
 
 import android.os.SystemClock
 import android.view.View
+import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -23,9 +24,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.PersonAdd
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -136,6 +139,10 @@ fun ShortsScreen(
     favoriteIds: Set<String>,
     favoritePendingIds: Set<String>,
     onToggleFavorite: (ShortVideo) -> Unit,
+    followStatusByAuthor: Map<String, Boolean>,
+    followPendingAuthors: Set<String>,
+    followError: String?,
+    onToggleFollow: (ShortVideo) -> Unit,
     onOpenAuthor: (ShortVideo) -> Unit,
     onPlaybackProgress: (videoId: String, positionMs: Long, durationMs: Long) -> Unit,
 ) {
@@ -381,6 +388,12 @@ fun ShortsScreen(
         if (state.error != null) retryFocusRequester.requestFocus()
     }
 
+    LaunchedEffect(followError) {
+        followError?.takeIf { it.isNotBlank() }?.let { message ->
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+        }
+    }
+
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
@@ -423,7 +436,7 @@ fun ShortsScreen(
                 true
             },
     ) {
-        val infoWidth = (maxWidth * 0.28f).coerceAtMost(280.dp)
+        val infoWidth = (maxWidth * 0.28f).coerceAtMost(340.dp)
         val danmakuHeight = (maxHeight * DANMAKU_HEIGHT_FRACTION)
             .coerceAtLeast(72.dp)
         val rightPanelWidth = when {
@@ -567,6 +580,7 @@ fun ShortsScreen(
             !sidePanelVisible &&
             !searchVisible
         ) {
+            val followKey = current.authorSecUid.ifBlank { current.authorUid }
             Row(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -578,6 +592,9 @@ fun ShortsScreen(
                     video = current,
                     favoriteSelected = current.id in favoriteIds,
                     favoritePending = current.id in favoritePendingIds,
+                    followSelected = followStatusByAuthor[followKey]
+                        ?: (current.authorFollowStatus > 0),
+                    followPending = followKey in followPendingAuthors,
                     topFocusRequester = chromeFocusRequester,
                     focusRequester = bottomActionsFocusRequester,
                     selectedAction = selectedBottomAction,
@@ -587,6 +604,7 @@ fun ShortsScreen(
                         onOpenComments(current)
                     },
                     onFavoriteClick = { onToggleFavorite(current) },
+                    onFollowClick = { onToggleFollow(current) },
                     onAuthorClick = {
                         focusBottomActionsRequested = true
                         onOpenAuthor(current)
@@ -681,12 +699,15 @@ private fun ShortVideoInfo(
     video: ShortVideo,
     favoriteSelected: Boolean,
     favoritePending: Boolean,
+    followSelected: Boolean,
+    followPending: Boolean,
     topFocusRequester: FocusRequester,
     focusRequester: FocusRequester,
     selectedAction: Int,
     onSelectedActionChange: (Int) -> Unit,
     onCommentsClick: () -> Unit,
     onFavoriteClick: () -> Unit,
+    onFollowClick: () -> Unit,
     onAuthorClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -775,7 +796,7 @@ private fun ShortVideoInfo(
                             if (event.type == KeyEventType.KeyDown) {
                                 val step = if (event.key == Key.DirectionLeft) -1 else 1
                                 onSelectedActionChange(
-                                    Math.floorMod(selectedAction + step, 3),
+                                    Math.floorMod(selectedAction + step, 4),
                                 )
                             }
                             true
@@ -789,6 +810,7 @@ private fun ShortVideoInfo(
                                 when (selectedAction) {
                                     0 -> onCommentsClick()
                                     1 -> onFavoriteClick()
+                                    2 -> onFollowClick()
                                     else -> onAuthorClick()
                                 }
                             }
@@ -819,9 +841,19 @@ private fun ShortVideoInfo(
                 focused = actionsFocused && selectedAction == 1,
             )
             VideoActionItem(
+                icon = if (followSelected) Icons.Filled.Check else Icons.Outlined.PersonAdd,
+                label = when {
+                    followPending -> "处理中"
+                    followSelected -> "已关注"
+                    else -> "关注"
+                },
+                selected = followSelected,
+                focused = actionsFocused && selectedAction == 2,
+            )
+            VideoActionItem(
                 icon = Icons.Outlined.Home,
                 label = "主页",
-                focused = actionsFocused && selectedAction == 2,
+                focused = actionsFocused && selectedAction == 3,
             )
         }
     }
@@ -865,14 +897,14 @@ private fun VideoActionItem(
             .semantics(mergeDescendants = true) {
                 this.contentDescription = label
             }
-            .padding(horizontal = 11.dp, vertical = 7.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+            .padding(horizontal = 6.dp, vertical = 7.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
             imageVector = icon,
             contentDescription = null,
-            modifier = Modifier.size(18.dp),
+            modifier = Modifier.size(16.dp),
             tint = when {
                 focused -> FocusRing
                 selected -> Color(0xFFFFD45C)
@@ -885,6 +917,8 @@ private fun VideoActionItem(
             color = if (focused) FocusRing else TextPrimary,
             style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            softWrap = false,
         )
     }
 }
