@@ -89,6 +89,7 @@ import com.dongpiandi.douyintv.model.VideoCollection
 import com.dongpiandi.douyintv.performance.LocalDevicePerformanceProfile
 import com.dongpiandi.douyintv.ui.MyHomeTab
 import com.dongpiandi.douyintv.ui.MyProfileUiState
+import com.dongpiandi.douyintv.ui.WatchLaterUiState
 import com.dongpiandi.douyintv.ui.formatCount
 import com.dongpiandi.douyintv.ui.formatDuration
 import com.dongpiandi.douyintv.ui.screens.LoginScreen
@@ -106,6 +107,7 @@ fun MyHomeSidebar(
     onLoggedIn: (String) -> Unit,
     profile: MyProfileUiState,
     history: List<PlaybackHistoryEntry>,
+    watchLater: WatchLaterUiState,
     favorites: List<ShortVideo>,
     favoriteProgress: Map<String, PlaybackProgress>,
     favoritesLoading: Boolean,
@@ -114,11 +116,14 @@ fun MyHomeSidebar(
     favoritesHasMore: Boolean,
     onTabSelected: (MyHomeTab) -> Unit,
     onClose: () -> Unit,
+    onRetryWatchLater: () -> Unit,
+    onLoadMoreWatchLater: () -> Unit,
     onRetryMyVideos: () -> Unit,
     onLoadMoreMyVideos: () -> Unit,
     onRetryFavorites: () -> Unit,
     onLoadMoreFavorites: () -> Unit,
     onPlayHistory: (ShortVideo) -> Unit,
+    onPlayWatchLater: (ShortVideo) -> Unit,
     onPlayFavorite: (ShortVideo) -> Unit,
     onPlayMyVideo: (ShortVideo) -> Unit,
     onLogout: () -> Unit,
@@ -132,11 +137,17 @@ fun MyHomeSidebar(
         tabs.associateWith { FocusRequester() }
     }
     val historyFocusRequester = remember { FocusRequester() }
+    val watchLaterFocusRequester = remember { FocusRequester() }
     val favoritesFocusRequester = remember { FocusRequester() }
     val profileFocusRequester = remember { FocusRequester() }
     val contentFocusRequester = when (selectedTab) {
         MyHomeTab.HISTORY -> historyFocusRequester.takeIf {
             history.isNotEmpty()
+        }
+
+        MyHomeTab.WATCH_LATER -> watchLaterFocusRequester.takeIf {
+            watchLater.videos.isNotEmpty() ||
+                (!watchLater.loading && watchLater.error != null)
         }
 
         MyHomeTab.FAVORITES -> favoritesFocusRequester.takeIf {
@@ -155,6 +166,7 @@ fun MyHomeSidebar(
 
     val focusTargetInList = when (selectedTab) {
         MyHomeTab.HISTORY -> history.any { it.video.id == restoreFocusVideoId }
+        MyHomeTab.WATCH_LATER -> watchLater.videos.any { it.id == restoreFocusVideoId }
         MyHomeTab.FAVORITES -> favorites.any { it.id == restoreFocusVideoId }
         MyHomeTab.PROFILE -> profile.videos.any { it.id == restoreFocusVideoId }
     }
@@ -199,7 +211,7 @@ fun MyHomeSidebar(
         )
         Spacer(Modifier.height(8.dp))
         SidebarTabs(
-            labels = listOf("观看历史", "我的收藏", "我的主页"),
+            labels = listOf("观看历史", "稍后再看", "我的收藏", "我的主页"),
             selectedIndex = tabs.indexOf(selectedTab),
             requesters = tabs.map { tabRequesters.getValue(it) },
             downFocusRequester = contentFocusRequester,
@@ -219,6 +231,24 @@ fun MyHomeSidebar(
                 focusTargetVideoId = restoreFocusVideoId,
                 onFocusTargetFocused = onFocusRestored,
                 onPlay = onPlayHistory,
+            )
+
+            MyHomeTab.WATCH_LATER -> SidebarVideoList(
+                videos = watchLater.videos,
+                progressByVideoId = watchLater.progress,
+                loading = watchLater.loading,
+                loadingMore = watchLater.loadingMore,
+                error = watchLater.error,
+                hasMore = watchLater.hasMore,
+                emptyText = "稍后再看还是空的",
+                firstFocusRequester = watchLaterFocusRequester,
+                upFocusRequester = tabRequesters.getValue(MyHomeTab.WATCH_LATER),
+                currentVideoId = pinnedCurrentVideoId,
+                focusTargetVideoId = restoreFocusVideoId,
+                onFocusTargetFocused = onFocusRestored,
+                onRetry = onRetryWatchLater,
+                onLoadMore = onLoadMoreWatchLater,
+                onPlay = onPlayWatchLater,
             )
 
             MyHomeTab.FAVORITES -> SidebarVideoList(

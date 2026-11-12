@@ -236,6 +236,39 @@ class DouyinApi(
         )
     }
 
+    suspend fun loadWatchLaterVideos(
+        offset: Long = 0,
+        count: Int = 20,
+    ): VideoPage = withContext(Dispatchers.IO) {
+        ensureTtwid()
+        val pageSize = count.coerceIn(1, 20)
+        val params = commonWebParams()
+            .add("offset", offset.coerceAtLeast(0))
+            .add("count", pageSize)
+            .add("list_type", 0)
+            .add("operate_type", 0)
+        val request = requestBuilder(
+            url = "$WEB_HOST/aweme/v1/web/watchlater/list/?" +
+                params.sign(signer),
+            referer =
+                "$WEB_HOST/user/self?from_tab_name=main&showTab=watch_later",
+        ).get().build()
+        val response = json.decodeFromString<WatchLaterListResponse>(
+            executeText(request),
+        )
+        if (response.status_code != 0) {
+            throw ApiException(
+                response.status_msg ?: "稍后再看接口返回 ${response.status_code}",
+            )
+        }
+        val videos = response.videoDtos(json).mapNotNull(::mapVideo)
+        VideoPage(
+            videos = videos,
+            cursor = response.nextOffset(offset, pageSize),
+            hasMore = response.hasMore && videos.isNotEmpty(),
+        )
+    }
+
     suspend fun setFavorite(
         awemeId: String,
         favorite: Boolean,

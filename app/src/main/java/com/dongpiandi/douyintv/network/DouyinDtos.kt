@@ -2,7 +2,13 @@ package com.dongpiandi.douyintv.network
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.intOrNull
 
 @Serializable
 data class ChannelFeedResponse(
@@ -78,6 +84,45 @@ data class FavoriteListResponse(
     val max_cursor: Long = 0,
     val has_more: Int = 0,
 )
+
+@Serializable
+data class WatchLaterListResponse(
+    val status_code: Int = 0,
+    val status_msg: String? = null,
+    val aweme_list: List<AwemeDto>? = null,
+    val items: List<JsonElement>? = null,
+    val offset: Long = 0,
+    val cursor: Long = 0,
+    val max_cursor: Long = 0,
+    val has_more: JsonElement? = null,
+    val total: Long = 0,
+)
+
+internal val WatchLaterListResponse.hasMore: Boolean
+    get() = when (val value = has_more) {
+        is JsonPrimitive -> value.booleanOrNull
+            ?: value.intOrNull?.let { it != 0 }
+            ?: false
+
+        else -> false
+    }
+
+internal fun WatchLaterListResponse.videoDtos(json: Json): List<AwemeDto> {
+    val wrapped = items.orEmpty().mapNotNull { item ->
+        val candidate = (item as? JsonObject)?.let { value ->
+            value["aweme"] ?: value["aweme_info"]
+        } ?: item
+        runCatching { json.decodeFromJsonElement<AwemeDto>(candidate) }.getOrNull()
+    }
+    return (aweme_list.orEmpty() + wrapped).distinctBy(AwemeDto::aweme_id)
+}
+
+internal fun WatchLaterListResponse.nextOffset(
+    requestOffset: Long,
+    pageSize: Int,
+): Long = sequenceOf(offset, cursor, max_cursor)
+    .firstOrNull { it > 0 && it != requestOffset }
+    ?: (requestOffset + pageSize.coerceAtLeast(1))
 
 @Serializable
 data class AuthorPostResponse(

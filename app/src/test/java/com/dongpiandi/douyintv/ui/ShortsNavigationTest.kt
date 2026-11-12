@@ -50,6 +50,7 @@ class ShortsNavigationTest {
     fun recognizesSourcesOpenedFromSidebars() {
         assertTrue(ShortsSource.AUTHOR.isSidebarPlayback)
         assertTrue(ShortsSource.FAVORITES.isSidebarPlayback)
+        assertTrue(ShortsSource.WATCH_LATER.isSidebarPlayback)
         assertFalse(ShortsSource.RECOMMEND.isSidebarPlayback)
         assertFalse(ShortsSource.SEARCH.isSidebarPlayback)
     }

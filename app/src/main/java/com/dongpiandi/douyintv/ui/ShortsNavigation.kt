@@ -1,7 +1,9 @@
 package com.dongpiandi.douyintv.ui
 
 internal val ShortsSource.isSidebarPlayback: Boolean
-    get() = this == ShortsSource.FAVORITES || this == ShortsSource.AUTHOR
+    get() = this == ShortsSource.FAVORITES ||
+        this == ShortsSource.WATCH_LATER ||
+        this == ShortsSource.AUTHOR
 
 internal fun recommendationReturnAfterPlayback(
     currentShorts: ShortsUiState,

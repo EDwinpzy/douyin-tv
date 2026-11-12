@@ -37,12 +37,14 @@ enum class MainTab {
 enum class ShortsSource {
     RECOMMEND,
     FAVORITES,
+    WATCH_LATER,
     AUTHOR,
     SEARCH,
 }
 
 enum class MyHomeTab {
     HISTORY,
+    WATCH_LATER,
     FAVORITES,
     PROFILE,
 }
@@ -115,6 +117,17 @@ data class FavoritesUiState(
     val pendingIds: Set<String> = emptySet(),
     val progress: Map<String, PlaybackProgress> = emptyMap(),
     val resumeOnClose: Boolean = false,
+)
+
+data class WatchLaterUiState(
+    val videos: List<ShortVideo> = emptyList(),
+    val loading: Boolean = false,
+    val loaded: Boolean = false,
+    val loadingMore: Boolean = false,
+    val error: String? = null,
+    val offset: Long = 0,
+    val hasMore: Boolean = false,
+    val progress: Map<String, PlaybackProgress> = emptyMap(),
 )
 
 data class FollowUiState(
@@ -207,6 +220,7 @@ data class AppUiState(
     val shorts: ShortsUiState = ShortsUiState(),
     val engagement: EngagementUiState = EngagementUiState(),
     val favorites: FavoritesUiState = FavoritesUiState(),
+    val watchLater: WatchLaterUiState = WatchLaterUiState(),
     val follows: FollowUiState = FollowUiState(),
     val history: List<PlaybackHistoryEntry> = emptyList(),
     val myProfile: MyProfileUiState = MyProfileUiState(),
@@ -628,6 +642,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    fun retryWatchLater() {
+        loadWatchLater(reset = true)
+    }
+
+    fun loadMoreWatchLater() {
+        loadWatchLater(reset = false)
+    }
+
+    fun playWatchLater(video: ShortVideo) {
+        playCollectionVideo(
+            video = video,
+            sourceVideos = _state.value.watchLater.videos,
+            source = ShortsSource.WATCH_LATER,
+            sidebarReturn = myHomeSidebarPlaybackReturn(
+                tab = MyHomeTab.WATCH_LATER,
+                videoId = video.id,
+            ),
+        )
+    }
+
     fun playHistoryVideo(video: ShortVideo) {
         playCollectionVideo(
             video = video,
@@ -993,6 +1027,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 } else {
                     it.favorites
                 },
+                watchLater = if (
+                    it.watchLater.videos.any { video -> video.id == videoId }
+                ) {
+                    it.watchLater.copy(
+                        progress = it.watchLater.progress + (videoId to progress),
+                    )
+                } else {
+                    it.watchLater
+                },
                 history = it.history.map { entry ->
                     if (entry.video.id == videoId) {
                         entry.copy(progress = progress)
@@ -1194,6 +1237,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (!sessionStore.saveCookieHeader(cookieHeader)) return
         CookieManager.getInstance().flush()
         val myHomeVisible = _state.value.accountMenuVisible
+        val myHomeTab = _state.value.myHomeTab
         _state.update {
             it.copy(
                 loginVisible = false,
@@ -1204,7 +1248,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         loadShorts(reset = true)
         loadFavorites(reset = true)
         if (myHomeVisible) {
-            loadSelfProfile()
+            when (myHomeTab) {
+                MyHomeTab.WATCH_LATER -> loadWatchLater(reset = true)
+                MyHomeTab.PROFILE -> loadSelfProfile()
+                MyHomeTab.HISTORY, MyHomeTab.FAVORITES -> Unit
+            }
         }
     }
 
@@ -1219,11 +1267,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 favorites = it.favorites.copy(
                     progress = progressStore.load(it.favorites.videos.map(ShortVideo::id)),
                 ),
+                watchLater = it.watchLater.copy(
+                    progress = progressStore.load(
+                        it.watchLater.videos.map(ShortVideo::id),
+                    ),
+                ),
                 authorVideos = it.authorVideos.copy(visible = false),
                 sidebarPlaybackReturn = null,
             )
         }
         if (!current.isLoggedIn) return
+        if (tab == MyHomeTab.WATCH_LATER && !_state.value.watchLater.loaded) {
+            loadWatchLater(reset = true)
+        }
         if (tab == MyHomeTab.FAVORITES && !_state.value.favorites.loaded) {
             loadFavorites(reset = true)
         }
@@ -1258,6 +1314,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         when (tab) {
+            MyHomeTab.WATCH_LATER -> {
+                if (!_state.value.watchLater.loaded) loadWatchLater(reset = true)
+            }
+
             MyHomeTab.FAVORITES -> {
                 if (!_state.value.favorites.loaded) loadFavorites(reset = true)
             }
@@ -1295,6 +1355,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 accountMenuVisible = false,
                 loginVisible = false,
                 favorites = FavoritesUiState(),
+                watchLater = WatchLaterUiState(),
                 follows = FollowUiState(),
                 myProfile = MyProfileUiState(),
                 authorVideos = AuthorVideosUiState(),
@@ -1347,6 +1408,61 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 loading = false,
                                 loadingMore = false,
                                 error = error.toDisplayMessage("收藏列表加载失败"),
+                            ),
+                        )
+                    }
+                }
+        }
+    }
+
+    private fun loadWatchLater(reset: Boolean) {
+        val snapshot = _state.value.watchLater
+        if (snapshot.loading || snapshot.loadingMore) return
+        if (!reset && !snapshot.hasMore) return
+        val offset = if (reset) 0L else snapshot.offset
+        _state.update {
+            it.copy(
+                watchLater = it.watchLater.copy(
+                    loading = reset,
+                    loadingMore = !reset,
+                    error = null,
+                    videos = if (reset) emptyList() else it.watchLater.videos,
+                ),
+            )
+        }
+        viewModelScope.launch {
+            runCatching { api.loadWatchLaterVideos(offset = offset) }
+                .onSuccess { page ->
+                    _state.update { state ->
+                        val existing = if (reset) {
+                            emptyList()
+                        } else {
+                            state.watchLater.videos
+                        }
+                        val merged = (existing + page.videos)
+                            .distinctBy(ShortVideo::id)
+                        state.copy(
+                            watchLater = state.watchLater.copy(
+                                videos = merged,
+                                loading = false,
+                                loaded = true,
+                                loadingMore = false,
+                                error = null,
+                                offset = page.cursor,
+                                hasMore = page.hasMore,
+                                progress = progressStore.load(merged.map(ShortVideo::id)),
+                            ),
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    if (clearInvalidSession(error)) return@onFailure
+                    _state.update {
+                        it.copy(
+                            watchLater = it.watchLater.copy(
+                                loading = false,
+                                loadingMore = false,
+                                error = error.toDisplayMessage("稍后再看加载失败"),
                             ),
                         )
                     }
@@ -1990,6 +2106,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     isLoggedIn = false,
                     loginVisible = false,
                     favorites = FavoritesUiState(),
+                    watchLater = WatchLaterUiState(),
                     follows = FollowUiState(),
                     myProfile = MyProfileUiState(),
                     authorVideos = AuthorVideosUiState(),

@@ -17,7 +17,7 @@ MainActivity
       ├─ ShortsScreen          Compose + PlayerView + ShortsPlaybackEngine
       │   ├─ DanmakuOverlay    五轨弹幕画布
       │   └─ CommentsPanel     右侧评论抽屉
-      ├─ MyHomeSidebar         右侧账号主页：观看历史 / 收藏 / 本人作品
+      ├─ MyHomeSidebar         右侧账号主页：观看历史 / 稍后再看 / 收藏 / 本人作品
       ├─ AuthorProfileSidebar  右侧博主主页：视频 / 合集（无公开合集时隐藏）
       ├─ LiveGridScreen        Compose 响应式网格
       ├─ LivePlayerScreen      Compose + PlayerView + ExoPlayer(HLS)
@@ -122,8 +122,10 @@ MainActivity
 
 1. 登录后启动推荐流时并行加载收藏列表，收藏状态用于顶栏的“收藏/取消收藏”。
 2. 收藏动作通过网页接口提交；成功后同步更新本地状态，失败保留原状态并显示错误。
-3. 账号头像打开“我的主页”侧边栏，包含观看历史、我的收藏和我的主页三个标签；
-   观看历史与收藏列表显示标题、封面、时长和最后播放进度。
+3. 账号头像打开“我的主页”侧边栏，包含观看历史、稍后再看、我的收藏和我的主页四个
+   标签；观看历史、稍后再看与收藏列表显示标题、封面、时长和最后播放进度。稍后再看
+   使用当前登录会话调用 `/aweme/v1/web/watchlater/list/`，以 `offset` 分页，兼容
+   `items[].aweme`、`items[].aweme_info` 和 `aweme_list` 三种返回结构。
 4. “我的主页”标签使用当前登录账号的 `sec_uid` 调用本人作品接口，分页加载本人
    发布视频，列表显示封面、标题、时长和点赞；选择后替换主播放器队列并播放。
 5. 博主主页使用同一个右侧侧边栏框架，按当前视频的 `sec_uid` 分页加载公开视频；
