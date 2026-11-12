@@ -140,9 +140,7 @@ fun DouyinTvApp(viewModel: MainViewModel) {
                     searchVisible = state.search.visible,
                     isLoggedIn = state.isLoggedIn,
                     onSelectTab = viewModel::selectTab,
-                    onAccountClick = {
-                        if (state.isLoggedIn) viewModel.showAccountMenu() else viewModel.openLogin()
-                    },
+                    onAccountClick = { viewModel.showAccountMenu() },
                     onHistoryClick = {
                         if (state.isLoggedIn) {
                             viewModel.showAccountMenu(MyHomeTab.HISTORY)
@@ -181,9 +179,7 @@ fun DouyinTvApp(viewModel: MainViewModel) {
                     state = state.live,
                     isLoggedIn = state.isLoggedIn,
                     onSelectTab = viewModel::selectTab,
-                    onAccountClick = {
-                        if (state.isLoggedIn) viewModel.showAccountMenu() else viewModel.openLogin()
-                    },
+                    onAccountClick = { viewModel.showAccountMenu() },
                     onSearchClick = viewModel::openSearch,
                     onHistoryClick = {
                         if (state.isLoggedIn) {
@@ -204,6 +200,9 @@ fun DouyinTvApp(viewModel: MainViewModel) {
             if (state.accountMenuVisible) {
             MyHomeSidebar(
                 selectedTab = state.myHomeTab,
+                isLoggedIn = state.isLoggedIn,
+                isSessionCookie = viewModel::hasSessionCookie,
+                onLoggedIn = viewModel::completeLogin,
                 profile = state.myProfile,
                 history = state.history,
                 favorites = state.favorites.videos,

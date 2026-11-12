@@ -1193,6 +1193,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun completeLogin(cookieHeader: String) {
         if (!sessionStore.saveCookieHeader(cookieHeader)) return
         CookieManager.getInstance().flush()
+        val myHomeVisible = _state.value.accountMenuVisible
         _state.update {
             it.copy(
                 loginVisible = false,
@@ -1202,14 +1203,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         loadShorts(reset = true)
         loadFavorites(reset = true)
+        if (myHomeVisible) {
+            loadSelfProfile()
+        }
     }
 
     fun showAccountMenu(tab: MyHomeTab = MyHomeTab.PROFILE) {
         val current = _state.value
-        if (!current.isLoggedIn) {
-            openLogin()
-            return
-        }
         _state.update {
             it.copy(
                 overlayVisible = true,
@@ -1223,6 +1223,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 sidebarPlaybackReturn = null,
             )
         }
+        if (!current.isLoggedIn) return
         if (tab == MyHomeTab.FAVORITES && !_state.value.favorites.loaded) {
             loadFavorites(reset = true)
         }
@@ -1403,6 +1404,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 .onFailure { error ->
+                    if (clearInvalidSession(error)) return@onFailure
                     _state.update {
                         it.copy(
                             myProfile = it.myProfile.copy(
@@ -1970,5 +1972,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun Throwable.toDisplayMessage(fallback: String): String =
         message?.takeIf { it.isNotBlank() } ?: fallback
+
+    private fun clearInvalidSession(error: Throwable): Boolean {
+        val message = error.message.orEmpty()
+        val authenticationRequired = message.contains("未登录") ||
+            message.contains("请先登录") ||
+            message.contains("登录已失效") ||
+            message.contains("登录失效") ||
+            message.contains("重新登录")
+        if (!authenticationRequired) return false
+
+        sessionStore.clear()
+        CookieManager.getInstance().removeAllCookies {
+            CookieManager.getInstance().flush()
+            _state.update {
+                it.copy(
+                    isLoggedIn = false,
+                    loginVisible = false,
+                    favorites = FavoritesUiState(),
+                    follows = FollowUiState(),
+                    myProfile = MyProfileUiState(),
+                    authorVideos = AuthorVideosUiState(),
+                    search = SearchUiState(),
+                )
+            }
+        }
+        return true
+    }
 
 }

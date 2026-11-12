@@ -91,6 +91,7 @@ import com.dongpiandi.douyintv.ui.MyHomeTab
 import com.dongpiandi.douyintv.ui.MyProfileUiState
 import com.dongpiandi.douyintv.ui.formatCount
 import com.dongpiandi.douyintv.ui.formatDuration
+import com.dongpiandi.douyintv.ui.screens.LoginScreen
 import com.dongpiandi.douyintv.ui.theme.Accent
 import com.dongpiandi.douyintv.ui.theme.FocusRing
 import com.dongpiandi.douyintv.ui.theme.TextPrimary
@@ -100,6 +101,9 @@ import kotlinx.coroutines.delay
 @Composable
 fun MyHomeSidebar(
     selectedTab: MyHomeTab,
+    isLoggedIn: Boolean,
+    isSessionCookie: (String) -> Boolean,
+    onLoggedIn: (String) -> Unit,
     profile: MyProfileUiState,
     history: List<PlaybackHistoryEntry>,
     favorites: List<ShortVideo>,
@@ -161,7 +165,8 @@ fun MyHomeSidebar(
         }
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(isLoggedIn) {
+        if (!isLoggedIn) return@LaunchedEffect
         delay(80)
         if (restoreFocusVideoId == null || !focusTargetInList) {
             tabRequesters[selectedTab]?.requestFocus()
@@ -169,6 +174,15 @@ fun MyHomeSidebar(
     }
 
     SidebarFrame(title = "我的主页", onClose = onClose) {
+        if (!isLoggedIn) {
+            LoginScreen(
+                isSessionCookie = isSessionCookie,
+                onLoggedIn = onLoggedIn,
+                onClose = onClose,
+                embedded = true,
+            )
+            return@SidebarFrame
+        }
         val currentProfile = profile.profile
         ProfileIdentity(
             name = currentProfile?.nickname ?: "我的抖音",
