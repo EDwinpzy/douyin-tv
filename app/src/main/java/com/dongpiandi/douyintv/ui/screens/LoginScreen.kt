@@ -52,6 +52,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
@@ -74,6 +75,7 @@ fun LoginScreen(
     isSessionCookie: (String) -> Boolean,
     onLoggedIn: (String) -> Unit,
     onClose: () -> Unit,
+    embedded: Boolean = false,
 ) {
     val context = LocalContext.current
     val closeFocusRequester = remember { FocusRequester() }
@@ -184,8 +186,10 @@ fun LoginScreen(
         }
     }
 
-    LaunchedEffect(webView) {
-        closeFocusRequester.requestFocus()
+    LaunchedEffect(webView, embedded) {
+        delay(80)
+        val focusRequester = if (embedded) refreshFocusRequester else closeFocusRequester
+        runCatching { focusRequester.requestFocus() }
         while (isActive && !handled) {
             val cookie = CookieManager.getInstance().getCookie("https://www.douyin.com")
             if (cookie != null && isSessionCookie(cookie)) {
@@ -215,6 +219,26 @@ fun LoginScreen(
         }
     }
 
+    val refreshLogin: () -> Unit = {
+        error = null
+        qrVisible = false
+        loading = true
+        probeGeneration += 1
+        webView.reload()
+    }
+
+    if (embedded) {
+        EmbeddedLoginScreen(
+            webView = webView,
+            loading = loading,
+            qrVisible = qrVisible,
+            error = error,
+            refreshFocusRequester = refreshFocusRequester,
+            onRefresh = refreshLogin,
+        )
+        return
+    }
+
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
@@ -229,13 +253,7 @@ fun LoginScreen(
                 error = error,
                 closeFocusRequester = closeFocusRequester,
                 refreshFocusRequester = refreshFocusRequester,
-                onRefresh = {
-                    error = null
-                    qrVisible = false
-                    loading = true
-                    probeGeneration += 1
-                    webView.reload()
-                },
+                onRefresh = refreshLogin,
                 onClose = onClose,
             )
 
@@ -278,6 +296,128 @@ fun LoginScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun EmbeddedLoginScreen(
+    webView: WebView,
+    loading: Boolean,
+    qrVisible: Boolean,
+    error: String?,
+    refreshFocusRequester: FocusRequester,
+    onRefresh: () -> Unit,
+) {
+    val statusText = when {
+        error != null -> error
+        loading -> "正在打开登录页"
+        qrVisible -> "二维码已显示，等待手机确认"
+        else -> "正在唤起二维码"
+    }
+    val statusColor = when {
+        error != null -> MaterialTheme.colorScheme.error
+        qrVisible -> FocusRing
+        else -> TextSecondary
+    }
+
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            text = "扫码登录",
+            modifier = Modifier.fillMaxWidth(),
+            color = TextPrimary,
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+        )
+        Spacer(Modifier.size(3.dp))
+        Text(
+            text = "使用抖音 App 扫一扫，手机确认后自动登录",
+            modifier = Modifier.fillMaxWidth(),
+            color = TextSecondary,
+            style = MaterialTheme.typography.bodyMedium.copy(
+                fontSize = 11.sp,
+                lineHeight = 14.sp,
+            ),
+        )
+        Spacer(Modifier.size(8.dp))
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            color = Color.Black,
+            shape = RoundedCornerShape(16.dp),
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.10f)),
+        ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                AndroidView(
+                    factory = { webView },
+                    modifier = Modifier.fillMaxSize(),
+                )
+
+                if (loading) {
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .background(
+                                Color.Black.copy(alpha = 0.72f),
+                                RoundedCornerShape(14.dp),
+                            )
+                            .padding(horizontal = 18.dp, vertical = 14.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            color = Accent,
+                            strokeWidth = 3.dp,
+                        )
+                        Spacer(Modifier.size(8.dp))
+                        Text(
+                            text = "正在打开抖音授权页",
+                            color = TextSecondary,
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.size(7.dp))
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = PanelRaised.copy(alpha = 0.86f),
+            shape = RoundedCornerShape(10.dp),
+            border = BorderStroke(1.dp, statusColor.copy(alpha = 0.22f)),
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "●",
+                    color = statusColor,
+                    style = MaterialTheme.typography.labelMedium,
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = statusText,
+                    color = statusColor,
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontSize = 10.5.sp,
+                        lineHeight = 13.sp,
+                    ),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        Spacer(Modifier.size(6.dp))
+        LoginButton(
+            label = "刷新二维码",
+            modifier = Modifier.fillMaxWidth(),
+            focusRequester = refreshFocusRequester,
+            onClick = onRefresh,
+        )
     }
 }
 
@@ -455,6 +595,12 @@ private suspend fun WebView.evaluateJavascriptSuspend(script: String): String =
 
 private const val LOGIN_PROBE_JS = """
     (function () {
+      const visible = (el) => {
+        const rect = el.getBoundingClientRect();
+        const style = getComputedStyle(el);
+        return rect.width > 0 && rect.height > 0 &&
+          style.display !== 'none' && style.visibility !== 'hidden';
+      };
       const bodyText = (document.body?.innerText || '').replace(/\s+/g, '');
       const isSsoLogin = location.hostname === 'sso.douyin.com' ||
         location.hostname === 'login.douyin.com';
@@ -465,12 +611,10 @@ private const val LOGIN_PROBE_JS = """
       ) {
         return 'qr';
       }
-      const visible = (el) => {
-        const rect = el.getBoundingClientRect();
-        const style = getComputedStyle(el);
-        return rect.width > 0 && rect.height > 0 &&
-          style.display !== 'none' && style.visibility !== 'hidden';
-      };
+      const qrContainer = Array.from(
+        document.querySelectorAll('[data-e2e="qrcode-login-container"]')
+      ).find(visible);
+      if (qrContainer) return 'qr';
       const modal = Array.from(
         document.querySelectorAll('.douyin_login_new_class')
       ).find(visible);
@@ -539,19 +683,31 @@ private const val AUTO_OPEN_LOGIN_JS = """
           style.visibility !== 'hidden';
       };
       const loginButton = () => {
+        const e2eButton = document.querySelector('[data-e2e="login-button"]');
+        if (
+          e2eButton &&
+          !e2eButton.disabled &&
+          visible(e2eButton)
+        ) {
+          return e2eButton;
+        }
         const candidates = Array.from(
-          document.querySelectorAll('button.semi-button.semi-button-primary, button')
+          document.querySelectorAll(
+            'button, a, [role="button"], div, span'
+          )
         );
         return candidates.find((el) => {
           const text = (el.innerText || '').replace(/\s+/g, '').trim();
-          const rect = el.getBoundingClientRect();
+          const style = getComputedStyle(el);
           return text === '登录' &&
             !el.disabled &&
             visible(el) &&
-            rect.width >= 36 &&
-            rect.height >= 20 &&
-            rect.top >= 0 &&
-            rect.top < Math.max(180, window.innerHeight * 0.18);
+            (
+              el.tagName === 'BUTTON' ||
+              el.tagName === 'A' ||
+              el.getAttribute('role') === 'button' ||
+              style.cursor === 'pointer'
+            );
         }) || null;
       };
       const stop = () => {
@@ -559,19 +715,17 @@ private const val AUTO_OPEN_LOGIN_JS = """
         globalThis.__douyinTvAutoLoginTimer = null;
       };
       const clickLogin = () => {
-        const modal = Array.from(
-          document.querySelectorAll('.douyin_login_new_class')
-        ).find(visible);
-        if (modal) {
+        const loginOpen = Array.from(
+          document.querySelectorAll(
+            '.douyin_login_new_class, [data-e2e="qrcode-login-container"]'
+          )
+        ).some(visible);
+        if (loginOpen) {
           stop();
           return;
         }
         const button = loginButton();
         if (!button) return;
-        const hydrated = Object.keys(button).some((key) =>
-          key.startsWith('__reactProps$')
-        ) || typeof button.onclick === 'function';
-        if (!hydrated) return;
         const now = Date.now();
         if (now - (globalThis.__douyinTvAutoLoginLastClick || 0) < 1_800) return;
         globalThis.__douyinTvAutoLoginLastClick = now;
