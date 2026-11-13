@@ -211,7 +211,7 @@ fun MyHomeSidebar(
         )
         Spacer(Modifier.height(8.dp))
         SidebarTabs(
-            labels = listOf("观看历史", "稍后再看", "我的收藏", "我的主页"),
+            labels = listOf("本机历史", "稍后再看", "我的收藏", "我的主页"),
             selectedIndex = tabs.indexOf(selectedTab),
             requesters = tabs.map { tabRequesters.getValue(it) },
             downFocusRequester = contentFocusRequester,
@@ -224,7 +224,7 @@ fun MyHomeSidebar(
                 progressByVideoId = history.associate {
                     it.video.id to it.progress
                 },
-                emptyText = "还没有观看记录",
+                emptyText = "本机还没有观看记录",
                 firstFocusRequester = historyFocusRequester,
                 upFocusRequester = tabRequesters.getValue(MyHomeTab.HISTORY),
                 currentVideoId = pinnedCurrentVideoId,

@@ -241,6 +241,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var engagementJob: Job? = null
     private var searchJob: Job? = null
     private var pendingVoiceOpenQuery: String? = null
+    private var lastSessionValidationAtMs = 0L
     private val progressCommands = Channel<PlaybackProgressCommand>(capacity = 32)
 
     private val _state = MutableStateFlow(
@@ -546,6 +547,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 .onFailure { error ->
+                    if (clearInvalidSession(error)) return@onFailure
                     _state.update {
                         it.copy(
                             follows = it.follows.copy(
@@ -602,6 +604,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 .onFailure { error ->
+                    if (clearInvalidSession(error)) return@onFailure
                     _state.update {
                         it.copy(
                             favorites = it.favorites.copy(
@@ -721,15 +724,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
         }
-        if (!sameAuthor || !_state.value.authorVideos.loaded) {
-            loadAuthorVideos(reset = true)
-        }
-        if (!sameAuthor || _state.value.authorVideos.profile == null) {
-            loadAuthorProfile(video.authorSecUid)
-        }
-        if (!sameAuthor || !_state.value.authorVideos.collectionsLoaded) {
-            loadAuthorCollectionsPage(reset = true)
-        }
+        loadAuthorVideos(reset = true, keepContent = sameAuthor)
+        loadAuthorProfile(video.authorSecUid)
+        loadAuthorCollectionsPage(reset = true, keepContent = sameAuthor)
     }
 
     fun closeAuthorVideos() {
@@ -816,10 +813,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectAuthorTab(index: Int) {
-        val state = _state.value.authorVideos
         when (index) {
-            1 -> if (!state.collectionsLoaded && !state.collectionsLoading) {
-                loadAuthorCollectionsPage(reset = true)
+            1 -> if (!_state.value.authorVideos.collectionsLoading) {
+                loadAuthorCollectionsPage(reset = true, keepContent = true)
             }
         }
     }
@@ -1236,6 +1232,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun completeLogin(cookieHeader: String) {
         if (!sessionStore.saveCookieHeader(cookieHeader)) return
         CookieManager.getInstance().flush()
+        lastSessionValidationAtMs = System.currentTimeMillis()
         val myHomeVisible = _state.value.accountMenuVisible
         val myHomeTab = _state.value.myHomeTab
         _state.update {
@@ -1248,11 +1245,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         loadShorts(reset = true)
         loadFavorites(reset = true)
         if (myHomeVisible) {
-            when (myHomeTab) {
-                MyHomeTab.WATCH_LATER -> loadWatchLater(reset = true)
-                MyHomeTab.PROFILE -> loadSelfProfile()
-                MyHomeTab.HISTORY, MyHomeTab.FAVORITES -> Unit
-            }
+            refreshMyHomeTab(myHomeTab)
         }
     }
 
@@ -1277,15 +1270,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         if (!current.isLoggedIn) return
-        if (tab == MyHomeTab.WATCH_LATER && !_state.value.watchLater.loaded) {
-            loadWatchLater(reset = true)
-        }
-        if (tab == MyHomeTab.FAVORITES && !_state.value.favorites.loaded) {
-            loadFavorites(reset = true)
-        }
-        if (tab == MyHomeTab.PROFILE) {
-            loadSelfProfile()
-        }
+        refreshMyHomeTab(tab)
     }
 
     fun closeAccountMenu() {
@@ -1313,18 +1298,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 },
             )
         }
-        when (tab) {
-            MyHomeTab.WATCH_LATER -> {
-                if (!_state.value.watchLater.loaded) loadWatchLater(reset = true)
-            }
-
-            MyHomeTab.FAVORITES -> {
-                if (!_state.value.favorites.loaded) loadFavorites(reset = true)
-            }
-
-            MyHomeTab.PROFILE -> loadSelfProfile()
-            MyHomeTab.HISTORY -> Unit
-        }
+        if (_state.value.isLoggedIn) refreshMyHomeTab(tab)
     }
 
     fun retryMyProfile() {
@@ -1344,8 +1318,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun refreshMyHomeTab(tab: MyHomeTab) {
+        when (tab) {
+            MyHomeTab.FAVORITES -> loadFavorites(reset = true, keepContent = true)
+            MyHomeTab.WATCH_LATER -> loadWatchLater(reset = true, keepContent = true)
+            MyHomeTab.PROFILE -> loadSelfProfile(force = true)
+            MyHomeTab.HISTORY -> validateSessionIfNeeded()
+        }
+    }
+
+    private fun validateSessionIfNeeded() {
+        if (!_state.value.isLoggedIn) return
+        val now = System.currentTimeMillis()
+        if (now - lastSessionValidationAtMs < SESSION_VALIDATION_INTERVAL_MS) return
+        lastSessionValidationAtMs = now
+        viewModelScope.launch {
+            runCatching { api.loadSelfProfile() }
+                .onSuccess { profile ->
+                    _state.update {
+                        it.copy(
+                            myProfile = it.myProfile.copy(
+                                profile = profile,
+                                error = null,
+                            ),
+                        )
+                    }
+                }
+                .onFailure { error -> clearInvalidSession(error) }
+        }
+    }
+
     fun logout() {
         sessionStore.clear()
+        lastSessionValidationAtMs = 0L
         CookieManager.getInstance().removeAllCookies {
             CookieManager.getInstance().flush()
         }
@@ -1364,7 +1369,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun loadFavorites(reset: Boolean) {
+    private fun loadFavorites(reset: Boolean, keepContent: Boolean = false) {
         val snapshot = _state.value.favorites
         if (snapshot.loading || snapshot.loadingMore) return
         if (!reset && !snapshot.hasMore) return
@@ -1375,7 +1380,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     loading = reset,
                     loadingMore = !reset,
                     error = null,
-                    videos = if (reset) emptyList() else it.favorites.videos,
+                    videos = if (reset && !keepContent) {
+                        emptyList()
+                    } else {
+                        it.favorites.videos
+                    },
                 ),
             )
         }
@@ -1402,6 +1411,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 .onFailure { error ->
+                    if (clearInvalidSession(error)) return@onFailure
                     _state.update {
                         it.copy(
                             favorites = it.favorites.copy(
@@ -1415,7 +1425,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun loadWatchLater(reset: Boolean) {
+    private fun loadWatchLater(reset: Boolean, keepContent: Boolean = false) {
         val snapshot = _state.value.watchLater
         if (snapshot.loading || snapshot.loadingMore) return
         if (!reset && !snapshot.hasMore) return
@@ -1426,7 +1436,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     loading = reset,
                     loadingMore = !reset,
                     error = null,
-                    videos = if (reset) emptyList() else it.watchLater.videos,
+                    videos = if (reset && !keepContent) {
+                        emptyList()
+                    } else {
+                        it.watchLater.videos
+                    },
                 ),
             )
         }
@@ -1483,7 +1497,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 !profile.videosLoading &&
                 !profile.videosLoadingMore
             ) {
-                loadSelfVideos(secUid = secUid, reset = true)
+                loadSelfVideos(secUid = secUid, reset = true, keepContent = true)
             }
             return
         }
@@ -1498,6 +1512,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             runCatching { api.loadSelfProfile() }
                 .onSuccess { result ->
+                    val keepVideos = _state.value.myProfile.videos.isNotEmpty()
                     _state.update {
                         it.copy(
                             myProfile = it.myProfile.copy(
@@ -1508,7 +1523,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     }
                     if (result.secUid.isNotBlank()) {
-                        loadSelfVideos(secUid = result.secUid, reset = true)
+                        loadSelfVideos(
+                            secUid = result.secUid,
+                            reset = true,
+                            keepContent = keepVideos,
+                        )
                     } else {
                         _state.update {
                             it.copy(
@@ -1536,6 +1555,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun loadSelfVideos(
         secUid: String,
         reset: Boolean,
+        keepContent: Boolean = false,
     ) {
         val snapshot = _state.value.myProfile
         if (snapshot.profile?.secUid != secUid) return
@@ -1548,7 +1568,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     videosLoading = reset,
                     videosLoadingMore = !reset,
                     videosError = null,
-                    videos = if (reset) emptyList() else it.myProfile.videos,
+                    videos = if (reset && !keepContent) {
+                        emptyList()
+                    } else {
+                        it.myProfile.videos
+                    },
                 ),
             )
         }
@@ -1660,7 +1684,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun loadAuthorVideos(reset: Boolean) {
+    private fun loadAuthorVideos(reset: Boolean, keepContent: Boolean = false) {
         val snapshot = _state.value.authorVideos
         val authorSecUid = snapshot.authorSecUid
         if (authorSecUid.isBlank()) return
@@ -1673,7 +1697,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     loading = reset,
                     loadingMore = !reset,
                     error = null,
-                    videos = if (reset) emptyList() else it.authorVideos.videos,
+                    videos = if (reset && !keepContent) {
+                        emptyList()
+                    } else {
+                        it.authorVideos.videos
+                    },
                 ),
             )
         }
@@ -1786,7 +1814,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun loadAuthorCollectionsPage(reset: Boolean) {
+    private fun loadAuthorCollectionsPage(
+        reset: Boolean,
+        keepContent: Boolean = false,
+    ) {
         val snapshot = _state.value.authorVideos
         val authorSecUid = snapshot.authorSecUid
         if (authorSecUid.isBlank()) return
@@ -1799,7 +1830,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     collectionsLoading = reset,
                     collectionsLoadingMore = !reset,
                     collectionsError = null,
-                    collections = if (reset) emptyList() else it.authorVideos.collections,
+                    collections = if (reset && !keepContent) {
+                        emptyList()
+                    } else {
+                        it.authorVideos.collections
+                    },
                 ),
             )
         }
@@ -2098,6 +2133,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             message.contains("重新登录")
         if (!authenticationRequired) return false
 
+        lastSessionValidationAtMs = 0L
         sessionStore.clear()
         CookieManager.getInstance().removeAllCookies {
             CookieManager.getInstance().flush()
@@ -2115,6 +2151,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         return true
+    }
+
+    private companion object {
+        const val SESSION_VALIDATION_INTERVAL_MS = 60_000L
     }
 
 }
