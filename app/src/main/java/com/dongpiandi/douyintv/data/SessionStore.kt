@@ -27,11 +27,11 @@ class SessionStore(context: Context) {
         }.getOrElse {
             clear()
             null
-        }?.takeIf { hasSessionCookie(it) }
+        }?.takeIf { SessionCookie.hasSession(it) }
     }
 
     fun saveCookieHeader(cookieHeader: String): Boolean {
-        if (!hasSessionCookie(cookieHeader)) return false
+        if (!SessionCookie.hasSession(cookieHeader)) return false
         return runCatching {
             val cipher = Cipher.getInstance(TRANSFORMATION)
             cipher.init(Cipher.ENCRYPT_MODE, secretKey())
@@ -57,7 +57,7 @@ class SessionStore(context: Context) {
     }
 
     fun hasSessionCookie(cookieHeader: String): Boolean =
-        SESSION_PATTERN.containsMatchIn(cookieHeader)
+        SessionCookie.hasSession(cookieHeader)
 
     private fun secretKey(): SecretKey {
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
@@ -85,6 +85,5 @@ class SessionStore(context: Context) {
         const val KEY_COOKIE = "cookie_ciphertext"
         const val TRANSFORMATION = "AES/GCM/NoPadding"
         const val IV_SIZE = 12
-        val SESSION_PATTERN = Regex("""(?:^|;\s*)sessionid(?:_ss)?=[^;\s]+""")
     }
 }
