@@ -144,7 +144,12 @@ fun ShortsScreen(
     followError: String?,
     onToggleFollow: (ShortVideo) -> Unit,
     onOpenAuthor: (ShortVideo) -> Unit,
-    onPlaybackProgress: (videoId: String, positionMs: Long, durationMs: Long) -> Unit,
+    onPlaybackProgress: (
+        videoId: String,
+        authorUid: String,
+        positionMs: Long,
+        durationMs: Long,
+    ) -> Unit,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -193,7 +198,12 @@ fun ShortsScreen(
                 if (playbackState == Player.STATE_ENDED) {
                     val video = latestVideo
                     if (video != null && player.duration > 0L) {
-                        latestOnProgress(video.id, player.duration, player.duration)
+                        latestOnProgress(
+                            video.id,
+                            video.authorUid,
+                            player.duration,
+                            player.duration,
+                        )
                     }
                     latestOnEnded()
                 }
@@ -270,6 +280,7 @@ fun ShortsScreen(
     PlaybackProgressReporter(
         player = player,
         videoId = current?.id,
+        authorUid = current?.authorUid.orEmpty(),
         fallbackDurationMs = current?.durationMs ?: 0L,
         intervalMs = performanceProfile.playbackProgressIntervalMs,
         onProgress = latestOnProgress,
@@ -666,12 +677,18 @@ fun ShortsScreen(
 private fun PlaybackProgressReporter(
     player: Player,
     videoId: String?,
+    authorUid: String,
     fallbackDurationMs: Long,
     intervalMs: Long,
-    onProgress: (videoId: String, positionMs: Long, durationMs: Long) -> Unit,
+    onProgress: (
+        videoId: String,
+        authorUid: String,
+        positionMs: Long,
+        durationMs: Long,
+    ) -> Unit,
 ) {
     val latestOnProgress = rememberUpdatedState(onProgress)
-    LaunchedEffect(player, videoId, fallbackDurationMs, intervalMs) {
+    LaunchedEffect(player, videoId, authorUid, fallbackDurationMs, intervalMs) {
         if (videoId == null) return@LaunchedEffect
         var lastPositionMs = -1L
         var lastDurationMs = fallbackDurationMs
@@ -683,12 +700,17 @@ private fun PlaybackProgressReporter(
                     val position = player.currentPosition.coerceIn(0L, duration)
                     lastPositionMs = position
                     lastDurationMs = duration
-                    latestOnProgress.value(videoId, position, duration)
+                    latestOnProgress.value(videoId, authorUid, position, duration)
                 }
             }
         } finally {
             if (lastPositionMs >= 0L && lastDurationMs > 0L) {
-                latestOnProgress.value(videoId, lastPositionMs, lastDurationMs)
+                latestOnProgress.value(
+                    videoId,
+                    authorUid,
+                    lastPositionMs,
+                    lastDurationMs,
+                )
             }
         }
     }

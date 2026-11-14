@@ -87,6 +87,7 @@ import com.dongpiandi.douyintv.model.ShortVideo
 import com.dongpiandi.douyintv.model.UserProfile
 import com.dongpiandi.douyintv.model.VideoCollection
 import com.dongpiandi.douyintv.performance.LocalDevicePerformanceProfile
+import com.dongpiandi.douyintv.ui.AccountHistoryUiState
 import com.dongpiandi.douyintv.ui.MyHomeTab
 import com.dongpiandi.douyintv.ui.MyProfileUiState
 import com.dongpiandi.douyintv.ui.WatchLaterUiState
@@ -107,6 +108,7 @@ fun MyHomeSidebar(
     onLoggedIn: (String) -> Unit,
     profile: MyProfileUiState,
     history: List<PlaybackHistoryEntry>,
+    accountHistory: AccountHistoryUiState,
     watchLater: WatchLaterUiState,
     favorites: List<ShortVideo>,
     favoriteProgress: Map<String, PlaybackProgress>,
@@ -116,6 +118,8 @@ fun MyHomeSidebar(
     favoritesHasMore: Boolean,
     onTabSelected: (MyHomeTab) -> Unit,
     onClose: () -> Unit,
+    onRetryHistory: () -> Unit,
+    onLoadMoreHistory: () -> Unit,
     onRetryWatchLater: () -> Unit,
     onLoadMoreWatchLater: () -> Unit,
     onRetryMyVideos: () -> Unit,
@@ -142,7 +146,8 @@ fun MyHomeSidebar(
     val profileFocusRequester = remember { FocusRequester() }
     val contentFocusRequester = when (selectedTab) {
         MyHomeTab.HISTORY -> historyFocusRequester.takeIf {
-            history.isNotEmpty()
+            history.isNotEmpty() ||
+                (!accountHistory.loading && accountHistory.error != null)
         }
 
         MyHomeTab.WATCH_LATER -> watchLaterFocusRequester.takeIf {
@@ -211,7 +216,7 @@ fun MyHomeSidebar(
         )
         Spacer(Modifier.height(8.dp))
         SidebarTabs(
-            labels = listOf("本机历史", "稍后再看", "我的收藏", "我的主页"),
+            labels = listOf("观看历史", "稍后再看", "我的收藏", "我的主页"),
             selectedIndex = tabs.indexOf(selectedTab),
             requesters = tabs.map { tabRequesters.getValue(it) },
             downFocusRequester = contentFocusRequester,
@@ -224,12 +229,18 @@ fun MyHomeSidebar(
                 progressByVideoId = history.associate {
                     it.video.id to it.progress
                 },
-                emptyText = "本机还没有观看记录",
+                loading = accountHistory.loading,
+                loadingMore = accountHistory.loadingMore,
+                error = accountHistory.error,
+                hasMore = accountHistory.hasMore,
+                emptyText = "还没有观看记录",
                 firstFocusRequester = historyFocusRequester,
                 upFocusRequester = tabRequesters.getValue(MyHomeTab.HISTORY),
                 currentVideoId = pinnedCurrentVideoId,
                 focusTargetVideoId = restoreFocusVideoId,
                 onFocusTargetFocused = onFocusRestored,
+                onRetry = onRetryHistory,
+                onLoadMore = onLoadMoreHistory,
                 onPlay = onPlayHistory,
             )
 
