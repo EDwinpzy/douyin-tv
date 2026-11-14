@@ -269,6 +269,31 @@ class DouyinApi(
         )
     }
 
+    suspend fun loadAccountHistory(
+        cursor: Long = 0,
+        count: Int = 20,
+    ): VideoPage = withContext(Dispatchers.IO) {
+        ensureTtwid()
+        val params = commonWebParams()
+            .add("count", count.coerceIn(1, 20))
+            .add("max_cursor", cursor.coerceAtLeast(0))
+        val request = requestBuilder(
+            url = "$WEB_HOST/aweme/v1/web/history/read/?" + params.sign(signer),
+            referer = "$WEB_HOST/user/self?from_tab_name=main&showTab=history",
+        ).get().build()
+        val response = json.decodeFromString<VideoListResponse>(executeText(request))
+        if (response.status_code != 0) {
+            throw ApiException(
+                response.status_msg ?: "账号历史接口返回 ${response.status_code}",
+            )
+        }
+        VideoPage(
+            videos = response.aweme_list.orEmpty().mapNotNull(::mapVideo),
+            cursor = response.max_cursor.takeIf { it > 0L } ?: response.cursor,
+            hasMore = response.has_more != 0,
+        )
+    }
+
     suspend fun setFavorite(
         awemeId: String,
         favorite: Boolean,
@@ -296,6 +321,40 @@ class DouyinApi(
         val response = json.decodeFromString<FavoriteActionResponse>(executeText(request))
         if (response.status_code != 0) {
             throw ApiException(response.status_msg ?: "收藏操作返回 ${response.status_code}")
+        }
+    }
+
+    suspend fun writeAccountHistory(
+        awemeId: String,
+        authorId: String,
+        preItemId: String,
+        preItemSeen: Int,
+    ) = withContext(Dispatchers.IO) {
+        require(awemeId.isNotBlank()) { "视频标识不能为空" }
+        require(authorId.isNotBlank()) { "作者标识不能为空" }
+        ensureTtwid()
+        val body = SignedParams()
+            .add("aweme_id", awemeId)
+            .add("author_id", authorId)
+        if (preItemId.isNotBlank()) {
+            body.add("pre_item_seen", preItemSeen.coerceIn(0, 1))
+                .add("pre_item_id", preItemId)
+        }
+        val encodedBody = body.encoded()
+        val params = commonWebParams()
+        val request = requestBuilder(
+            url = "$WEB_HOST/aweme/v1/web/history/write/?" +
+                params.sign(signer),
+            referer = "$WEB_HOST/?recommend=1",
+        )
+            .header("Origin", WEB_HOST)
+            .post(encodedBody.toRequestBody(FORM_MEDIA_TYPE))
+            .build()
+        val response = json.decodeFromString<HistoryWriteResponse>(executeText(request))
+        if (response.status_code != 0) {
+            throw ApiException(
+                response.status_msg ?: "账号历史写入返回 ${response.status_code}",
+            )
         }
     }
 

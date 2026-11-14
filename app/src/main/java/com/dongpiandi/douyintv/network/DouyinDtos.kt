@@ -232,6 +232,12 @@ data class FavoriteActionResponse(
 )
 
 @Serializable
+data class HistoryWriteResponse(
+    val status_code: Int = 0,
+    val status_msg: String? = null,
+)
+
+@Serializable
 data class FollowUserResponse(
     val status_code: Int = 0,
     val status_msg: String? = null,
