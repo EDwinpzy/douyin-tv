@@ -24,12 +24,10 @@ class SessionStore(context: Context) {
             val cipher = Cipher.getInstance(TRANSFORMATION)
             cipher.init(Cipher.DECRYPT_MODE, secretKey(), GCMParameterSpec(128, iv))
             String(cipher.doFinal(payload), Charsets.UTF_8)
-        }.getOrElse {
-            clear()
-            null
-        }?.takeIf { SessionCookie.hasSession(it) }
+        }.getOrNull()?.takeIf { SessionCookie.hasSession(it) }
     }
 
+    @Synchronized
     fun saveCookieHeader(cookieHeader: String): Boolean {
         if (!SessionCookie.hasSession(cookieHeader)) return false
         return runCatching {
@@ -42,6 +40,15 @@ class SessionStore(context: Context) {
                 .apply()
             true
         }.getOrDefault(false)
+    }
+
+    @Synchronized
+    fun mergeCookieHeader(freshCookieHeader: String?): Boolean {
+        if (freshCookieHeader.isNullOrBlank()) return false
+        val stored = cookieHeader().orEmpty()
+        val merged = SessionCookie.merge(stored, freshCookieHeader) ?: return false
+        if (merged == stored) return false
+        return saveCookieHeader(merged)
     }
 
     fun hasSession(): Boolean = cookieHeader() != null

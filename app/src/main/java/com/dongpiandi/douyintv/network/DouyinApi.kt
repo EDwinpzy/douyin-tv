@@ -1,6 +1,9 @@
 package com.dongpiandi.douyintv.network
 
+import android.webkit.CookieManager
+import android.util.Log
 import com.dongpiandi.douyintv.data.DeviceIdentityStore
+import com.dongpiandi.douyintv.data.SessionCookie
 import com.dongpiandi.douyintv.data.SessionStore
 import com.dongpiandi.douyintv.model.CollectionPage
 import com.dongpiandi.douyintv.model.CommentPage
@@ -29,17 +32,20 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
+import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
 class DouyinApi(
     private val identityStore: DeviceIdentityStore,
     private val sessionStore: SessionStore,
     private val signer: AbogusSigner = AbogusSigner(),
+    private val webTransport: DouyinWebTransport? = null,
 ) {
     private val json = Json {
         ignoreUnknownKeys = true
         coerceInputValues = true
         isLenient = true
+        encodeDefaults = true
     }
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -48,6 +54,18 @@ class DouyinApi(
         .followRedirects(true)
         .build()
     private val ttwidMutex = Mutex()
+    private val selfUidMutex = Mutex()
+    private val csrfMutex = Mutex()
+    @Volatile
+    private var cachedSelfUid: String? = null
+    @Volatile
+    private var cachedSelfUidSessionFingerprint: String? = null
+    @Volatile
+    private var cachedCsrfToken: String? = null
+    @Volatile
+    private var cachedCsrfSessionFingerprint: String? = null
+    @Volatile
+    private var csrfTokenExpiresAtMs = 0L
 
     suspend fun loadShortVideos(page: Int): List<ShortVideo> = withContext(Dispatchers.IO) {
         val params = commonWebParams()
@@ -216,7 +234,7 @@ class DouyinApi(
             .add("cursor", cursor.coerceAtLeast(0))
             .encoded()
         val params = commonWebParams()
-        val request = requestBuilder(
+        val request = writeRequestBuilder(
             url = "$WEB_HOST/aweme/v1/web/aweme/listcollection/?" +
                 params.sign(signer),
             referer =
@@ -244,7 +262,6 @@ class DouyinApi(
         val pageSize = count.coerceIn(1, 20)
         val params = commonWebParams()
             .add("offset", offset.coerceAtLeast(0))
-            .add("count", pageSize)
             .add("list_type", 0)
             .add("operate_type", 0)
         val request = requestBuilder(
@@ -269,6 +286,65 @@ class DouyinApi(
         )
     }
 
+    suspend fun setWatchLater(
+        awemeId: String,
+        add: Boolean,
+    ) = withContext(Dispatchers.IO) {
+        require(awemeId.isNotBlank()) { "视频标识不能为空" }
+        ensureTtwid()
+        val params = commonWebParams()
+        val accountUid = selfUidForWrite()
+        val path = if (add) {
+            "/aweme/v1/web/watchlater/upsert/"
+        } else {
+            "/aweme/v1/web/watchlater/remove/"
+        }
+        val body = if (add) {
+            json.encodeToString(
+                WatchLaterUpsertPayload.serializer(),
+                WatchLaterUpsertPayload(
+                    item_to_playinfo = mapOf(
+                        awemeId to WatchLaterPlayInfoDto(),
+                    ),
+                ),
+            )
+        } else {
+            json.encodeToString(
+                WatchLaterRemovePayload.serializer(),
+                WatchLaterRemovePayload(remove_item_ids = listOf(awemeId)),
+            )
+        }
+        val signedParams = params.sign(signer, body)
+        val responseBody = sendActionWrite(
+            path = path,
+            signedParams = signedParams,
+            accountUid = accountUid,
+            body = body,
+            referer =
+                "$WEB_HOST/user/self?from_tab_name=main&showTab=watch_later",
+            useWebTransport = false,
+            host = WEB_HOST,
+        )
+        if (responseBody.isBlank()) {
+            throw ApiException("稍后观看操作未确认，请稍后重试")
+        }
+        val response = json.decodeFromString<WatchLaterActionResponse>(
+            responseBody,
+        )
+        if (response.status_code != 0) {
+            invalidateCsrfToken()
+            Log.w(
+                "DouyinTvHistory",
+                "watch later action rejected status=${response.status_code} " +
+                    "message=${response.status_msg.orEmpty().take(80)} " +
+                    "bodyLength=${responseBody.length}",
+            )
+            throw ApiException(
+                response.status_msg ?: "稍后观看操作返回 ${response.status_code}",
+            )
+        }
+    }
+
     suspend fun loadAccountHistory(
         cursor: Long = 0,
         count: Int = 20,
@@ -277,21 +353,74 @@ class DouyinApi(
         val params = commonWebParams()
             .add("count", count.coerceIn(1, 20))
             .add("max_cursor", cursor.coerceAtLeast(0))
+            .add("directory", 0)
+            .add("category", 0)
+            .add("status", -1)
         val request = requestBuilder(
             url = "$WEB_HOST/aweme/v1/web/history/read/?" + params.sign(signer),
             referer = "$WEB_HOST/user/self?from_tab_name=main&showTab=history",
         ).get().build()
-        val response = json.decodeFromString<VideoListResponse>(executeText(request))
+        val responseBody = executeText(request)
+        val response = json.decodeFromString<VideoListResponse>(responseBody)
         if (response.status_code != 0) {
             throw ApiException(
                 response.status_msg ?: "账号历史接口返回 ${response.status_code}",
             )
         }
+        val videos = response.aweme_list.orEmpty().mapNotNull(::mapVideo)
+        Log.d(
+            "DouyinTvHistory",
+            "history read status=${response.status_code} " +
+                "raw=${response.aweme_list.orEmpty().size} " +
+                "mapped=${videos.size} cursor=${response.max_cursor} " +
+                "hasMore=${response.has_more}",
+        )
         VideoPage(
-            videos = response.aweme_list.orEmpty().mapNotNull(::mapVideo),
+            videos = videos,
             cursor = response.max_cursor.takeIf { it > 0L } ?: response.cursor,
             hasMore = response.has_more != 0,
         )
+    }
+
+    suspend fun writePlaybackProgress(
+        itemId: String,
+        durationMs: Long,
+        positionMs: Long,
+    ) = withContext(Dispatchers.IO) {
+        require(itemId.isNotBlank()) { "视频标识不能为空" }
+        if (durationMs <= 0L) return@withContext
+        ensureTtwid()
+        val params = commonWebParams()
+        val accountUid = selfUidForWrite()
+        val body = SignedParams()
+            .add("item_id", itemId)
+            .add("item_duration", durationMs.coerceAtLeast(0L))
+            .add("item_progress", positionMs.coerceIn(0L, durationMs))
+            .encoded()
+        val signedParams = params.sign(signer, body)
+        val request = writeRequestBuilder(
+            url = "$WEB_HOST/aweme/v1/web/play/progress/?" +
+                signedParams +
+                "&uid=" + accountUidParam(accountUid),
+            referer = "$WEB_HOST/?recommend=1",
+        )
+            .header("Origin", WEB_HOST)
+            .post(body.toRequestBody(FORM_MEDIA_TYPE))
+            .build()
+        val responseBody = executeText(request, allowEmpty = true)
+        val response = responseBody
+            .takeIf { it.isNotBlank() }
+            ?.let {
+                runCatching {
+                    json.decodeFromString<PlaybackProgressWriteResponse>(it)
+                }.getOrNull()
+            }
+        if (response != null && response.status_code != 0) {
+            invalidateCsrfToken()
+            throw ApiException(
+                "${response.status_msg ?: "播放进度接口返回"}（${response.status_code}）",
+            )
+        }
     }
 
     suspend fun setFavorite(
@@ -300,26 +429,33 @@ class DouyinApi(
     ) = withContext(Dispatchers.IO) {
         require(awemeId.isNotBlank()) { "视频标识不能为空" }
         ensureTtwid()
-        val body = SignedParams()
-            .add("action", if (favorite) 1 else 0)
-            .add("aweme_id", awemeId)
-            .add("aweme_type", 0)
-            .encoded()
+        val body = json.encodeToString(
+            FavoriteActionPayload.serializer(),
+            FavoriteActionPayload(
+                action = if (favorite) 1 else 0,
+                aweme_id = awemeId,
+            ),
+        )
         val params = commonWebParams()
-        val request = requestBuilder(
-            url = "$WEB_HOST/aweme/v1/web/aweme/collect/?" +
-                params.sign(signer),
+        val accountUid = selfUidForWrite()
+        val signedParams = params.sign(signer, body)
+        val responseBody = sendActionWrite(
+            path = "/aweme/v1/web/aweme/collect/",
+            signedParams = signedParams,
+            accountUid = accountUid,
+            body = body,
             referer = if (favorite) {
                 "$WEB_HOST/?recommend=1"
             } else {
                 "$WEB_HOST/user/self?from_tab_name=main&showTab=favorite_collection"
             },
         )
-            .header("Origin", WEB_HOST)
-            .post(body.toRequestBody(FORM_MEDIA_TYPE))
-            .build()
-        val response = json.decodeFromString<FavoriteActionResponse>(executeText(request))
+        if (responseBody.isBlank()) {
+            throw ApiException("收藏操作未确认，请稍后重试")
+        }
+        val response = json.decodeFromString<FavoriteActionResponse>(responseBody)
         if (response.status_code != 0) {
+            invalidateCsrfToken()
             throw ApiException(response.status_msg ?: "收藏操作返回 ${response.status_code}")
         }
     }
@@ -342,9 +478,12 @@ class DouyinApi(
         }
         val encodedBody = body.encoded()
         val params = commonWebParams()
-        val request = requestBuilder(
+        val accountUid = selfUidForWrite()
+        val signedParams = params.sign(signer, encodedBody)
+        val request = writeRequestBuilder(
             url = "$WEB_HOST/aweme/v1/web/history/write/?" +
-                params.sign(signer),
+                signedParams +
+                "&uid=" + accountUidParam(accountUid),
             referer = "$WEB_HOST/?recommend=1",
         )
             .header("Origin", WEB_HOST)
@@ -352,6 +491,7 @@ class DouyinApi(
             .build()
         val response = json.decodeFromString<HistoryWriteResponse>(executeText(request))
         if (response.status_code != 0) {
+            invalidateCsrfToken()
             throw ApiException(
                 response.status_msg ?: "账号历史写入返回 ${response.status_code}",
             )
@@ -373,24 +513,75 @@ class DouyinApi(
             throw ApiException("作者信息不完整")
         }
         ensureTtwid()
-        val body = SignedParams()
-            .add("user_id", targetUid)
-            .add("type", if (follow) 1 else 2)
-            .encoded()
+        val accountUid = selfUidForWrite()
+        if (targetUid == accountUid) {
+            throw ApiException("不能关注自己")
+        }
+        val encodedBody = json.encodeToString(
+            FollowUserPayload.serializer(),
+            FollowUserPayload(
+                user_id = targetUid,
+                type = if (follow) 1 else 0,
+            ),
+        )
         val params = commonWebParams()
-        val request = requestBuilder(
-            url = "$WEB_HOST/aweme/v1/web/commit/follow/user/?" +
-                params.sign(signer),
+        val signedParams = params.sign(signer, encodedBody)
+        val responseBody = sendActionWrite(
+            path = "/aweme/v1/web/commit/follow/user/",
+            signedParams = signedParams,
+            accountUid = accountUid,
+            body = encodedBody,
             referer = "$WEB_HOST/user/${authorSecUid.ifBlank { targetUid }}",
+        )
+        if (responseBody.isBlank()) {
+            if (authorSecUid.isBlank()) {
+                throw ApiException("关注状态未确认，请稍后重试")
+            }
+            val latestFollowStatus = loadAuthorProfile(authorSecUid).followStatus
+            val expected = if (follow) 1 else 0
+            if ((latestFollowStatus > 0) != (expected > 0)) {
+                throw ApiException("关注状态未确认，请稍后重试")
+            }
+            return@withContext latestFollowStatus > 0
+        }
+        val response = json.decodeFromString<FollowUserResponse>(responseBody)
+        if (response.status_code != 0) {
+            invalidateCsrfToken()
+            throw ApiException(response.status_msg ?: "关注操作返回 ${response.status_code}")
+        }
+        val followStatus = response.follow_status
+            ?: throw ApiException("关注状态未确认，请稍后重试")
+        followStatus > 0
+    }
+
+    private suspend fun sendActionWrite(
+        path: String,
+        signedParams: String,
+        accountUid: String,
+        body: String,
+        referer: String,
+        useWebTransport: Boolean = true,
+        host: String = WRITE_HOST,
+    ): String {
+        val transport = webTransport
+        if (useWebTransport && transport != null) {
+            return transport.post(
+                path = path,
+                body = body,
+                queryParams = WEB_SEARCH_PARAMS,
+            ).body
+        }
+        val request = writeRequestBuilder(
+            url = "$host$path?" +
+                signedParams +
+                "&uid=" + accountUidParam(accountUid),
+            referer = referer,
+            fetchSite = if (host == WEB_HOST) "same-origin" else "same-site",
         )
             .header("Origin", WEB_HOST)
             .post(body.toRequestBody(FORM_MEDIA_TYPE))
             .build()
-        val response = json.decodeFromString<FollowUserResponse>(executeText(request))
-        if (response.status_code != 0) {
-            throw ApiException(response.status_msg ?: "关注操作返回 ${response.status_code}")
-        }
-        response.follow_status?.let { it > 0 } ?: follow
+        return executeText(request, allowEmpty = true)
     }
 
     suspend fun loadAuthorVideos(
@@ -586,7 +777,49 @@ class DouyinApi(
             throw ApiException(response.status_msg ?: "账号资料接口返回 ${response.status_code}")
         }
         response.user?.let(::mapUserProfile)
+            ?.also { profile ->
+                cacheSelfUid(
+                    uid = profile.uid,
+                    sessionFingerprint = SessionCookie.loginSessionFingerprint(
+                        sessionStore.cookieHeader().orEmpty(),
+                    ),
+                )
+            }
             ?: throw ApiException("账号资料暂时不可用")
+    }
+
+    private suspend fun selfUidForWrite(): String {
+        val sessionFingerprint = SessionCookie.loginSessionFingerprint(
+            sessionStore.cookieHeader().orEmpty(),
+        )
+        cachedSelfUid
+            ?.takeIf {
+                it.isNotBlank() &&
+                    cachedSelfUidSessionFingerprint == sessionFingerprint
+            }
+            ?.let { return it }
+        return selfUidMutex.withLock {
+            cachedSelfUid
+                ?.takeIf {
+                    it.isNotBlank() &&
+                        cachedSelfUidSessionFingerprint == sessionFingerprint
+                }
+                ?.let { return@withLock it }
+            val uid = loadSelfProfile().uid.trim()
+            if (uid.isBlank()) {
+                throw ApiException("无法获取当前账号标识，播放进度暂未写回")
+            }
+            uid
+        }
+    }
+
+    private fun cacheSelfUid(
+        uid: String,
+        sessionFingerprint: String,
+    ) {
+        if (uid.isBlank() || sessionFingerprint.isBlank()) return
+        cachedSelfUid = uid
+        cachedSelfUidSessionFingerprint = sessionFingerprint
     }
 
     suspend fun loadAuthorProfile(authorSecUid: String): UserProfile =
@@ -761,6 +994,7 @@ class DouyinApi(
         url: String,
         referer: String,
         cookieOverride: String? = null,
+        fetchSite: String = "same-origin",
     ): Request.Builder {
         val builder = Request.Builder()
             .url(url)
@@ -770,7 +1004,7 @@ class DouyinApi(
             .header("Referer", referer)
             .header("uifid", uifidValue())
             .header("x-tt-argus", "1")
-            .header("sec-fetch-site", "same-origin")
+            .header("sec-fetch-site", fetchSite)
             .header("sec-fetch-mode", "cors")
             .header("sec-fetch-dest", "empty")
             .header("sec-ch-ua-mobile", "?0")
@@ -778,16 +1012,79 @@ class DouyinApi(
             .header("priority", "u=1, i")
             .header("pragma", "no-cache")
             .header("cache-control", "no-cache")
-            .header("x-secsdk-csrf-token", "DOWNGRADE")
         val cookie = cookieOverride ?: mergedCookie(identityStore.ttwid())
         if (cookie.isNotBlank()) builder.header("Cookie", cookie)
         return builder
     }
 
+    private suspend fun writeRequestBuilder(
+        url: String,
+        referer: String,
+        fetchSite: String = "same-origin",
+    ): Request.Builder = requestBuilder(
+        url = url,
+        referer = referer,
+        fetchSite = fetchSite,
+    ).also { builder ->
+        val token = csrfToken()
+            ?: throw ApiException("安全校验初始化失败，请稍后重试")
+        builder.header("x-secsdk-csrf-token", token)
+    }
+
+    private fun invalidateCsrfToken() {
+        cachedCsrfToken = null
+        cachedCsrfSessionFingerprint = null
+        csrfTokenExpiresAtMs = 0L
+    }
+
+    private suspend fun csrfToken(): String? {
+        val now = System.currentTimeMillis()
+        val sessionFingerprint = SessionCookie.loginSessionFingerprint(
+            sessionStore.cookieHeader().orEmpty(),
+        )
+        cachedCsrfToken
+            ?.takeIf {
+                it.isNotBlank() &&
+                    csrfTokenExpiresAtMs > now &&
+                    cachedCsrfSessionFingerprint == sessionFingerprint
+            }
+            ?.let { return it }
+        return csrfMutex.withLock {
+            cachedCsrfToken
+                ?.takeIf {
+                    it.isNotBlank() &&
+                        csrfTokenExpiresAtMs > now &&
+                        cachedCsrfSessionFingerprint == sessionFingerprint
+                }
+                ?.let { return@withLock it }
+            runCatching {
+                val request = requestBuilder(
+                    url = "$WEB_HOST/service/2/abtest_config/",
+                    referer = WEB_HOST,
+                )
+                    .header("x-secsdk-csrf-request", "1")
+                    .header("x-secsdk-csrf-version", "1.2.22")
+                    .head()
+                    .build()
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@use null
+                    persistResponseCookies(response)
+                    response.header("x-ware-csrf-token")
+                        ?.split(',')
+                        ?.getOrNull(1)
+                        ?.trim()
+                        ?.takeIf { it.isNotBlank() }
+                }
+            }.getOrNull()?.also { token ->
+                cachedCsrfToken = token
+                cachedCsrfSessionFingerprint = sessionFingerprint
+                csrfTokenExpiresAtMs = now + CSRF_TOKEN_TTL_MS
+            }
+        }
+    }
+
     private fun mergedCookie(ttwid: String?): String {
-        val stored = sessionStore.cookieHeader().orEmpty()
-        val entries = linkedMapOf<String, String>()
-        parseCookieHeader(stored).forEach { (name, value) -> entries[name] = value }
+        val entries = cookieEntries()
         if (!ttwid.isNullOrBlank() && "ttwid" !in entries) entries["ttwid"] = ttwid
         if ("UIFID_TEMP" !in entries && "UIFID" !in entries) {
             entries["UIFID_TEMP"] = identityStore.uifid
@@ -801,11 +1098,24 @@ class DouyinApi(
         return entries.entries.joinToString("; ") { "${it.key}=${it.value}" }
     }
 
-    private fun sessionCookieValue(name: String): String? =
+    private fun cookieEntries(): LinkedHashMap<String, String> {
+        val entries = linkedMapOf<String, String>()
         parseCookieHeader(sessionStore.cookieHeader().orEmpty())
-            .firstOrNull { it.first == name }
-            ?.second
-            ?.takeIf(String::isNotBlank)
+            .forEach { (name, value) -> entries[name] = value }
+        parseCookieHeader(freshCookieHeader())
+            .forEach { (name, value) -> entries[name] = value }
+        return entries
+    }
+
+    private fun freshCookieHeader(): String =
+        runCatching {
+            CookieManager.getInstance()
+                .getCookie(DOUYIN_WEB_COOKIE_URL)
+                .orEmpty()
+        }.getOrDefault("")
+
+    private fun sessionCookieValue(name: String): String? =
+        cookieEntries()[name]?.takeIf(String::isNotBlank)
 
     private fun uifidValue(): String =
         sessionCookieValue("UIFID") ?: identityStore.uifid
@@ -815,7 +1125,13 @@ class DouyinApi(
             val value = part.trim()
             val separator = value.indexOf('=')
             if (separator <= 0) return@mapNotNull null
-            value.substring(0, separator).trim() to value.substring(separator + 1).trim()
+            val name = value.substring(0, separator).trim()
+            val cookieValue = value.substring(separator + 1).trim()
+            if (name.isBlank() || cookieValue.isBlank()) {
+                null
+            } else {
+                name to cookieValue
+            }
         }
 
     private fun parseCookieValue(setCookie: String, name: String): String? {
@@ -828,14 +1144,19 @@ class DouyinApi(
     private fun executeText(
         request: Request,
         emptyMessage: String = "接口返回为空，请稍后重试",
+        allowEmpty: Boolean = false,
     ): String {
         try {
             client.newCall(request).execute().use { response ->
                 val body = response.body?.string().orEmpty()
                 if (!response.isSuccessful) {
+                    if (request.method == "POST" && response.code in 400..499) {
+                        invalidateCsrfToken()
+                    }
                     throw ApiException("网络请求失败：HTTP ${response.code}")
                 }
-                if (body.isBlank()) {
+                persistResponseCookies(response)
+                if (body.isBlank() && !allowEmpty) {
                     throw ApiException(emptyMessage)
                 }
                 return body
@@ -845,6 +1166,26 @@ class DouyinApi(
         } catch (error: IOException) {
             throw ApiException("网络连接失败：${error.message ?: "请检查网络"}")
         }
+    }
+
+    private fun persistResponseCookies(response: okhttp3.Response) {
+        val rawCookies = response.headers.values("Set-Cookie")
+        if (rawCookies.isEmpty()) return
+        val cookiePairs = rawCookies.mapNotNull { header ->
+            val first = header.substringBefore(';').trim()
+            val separator = first.indexOf('=')
+            if (separator <= 0) return@mapNotNull null
+            val name = first.substring(0, separator).trim()
+            val value = first.substring(separator + 1).trim()
+            if (name.isBlank() || value.isBlank()) null else "$name=$value"
+        }
+        if (cookiePairs.isEmpty()) return
+        sessionStore.mergeCookieHeader(cookiePairs.joinToString("; "))
+        val cookieManager = CookieManager.getInstance()
+        rawCookies.forEach { header ->
+            cookieManager.setCookie(DOUYIN_WEB_COOKIE_URL, header)
+        }
+        cookieManager.flush()
     }
 
     private fun mapVideo(dto: AwemeDto): ShortVideo? {
@@ -872,7 +1213,38 @@ class DouyinApi(
             commentCount = dto.statistics?.comment_count ?: 0,
             authorUid = dto.author?.uid.orEmpty().trim(),
             authorFollowStatus = dto.author?.follow_status ?: 0,
+            remoteProgressMs = remotePlaybackProgressMs(dto),
         )
+    }
+
+    private fun remotePlaybackProgressMs(dto: AwemeDto): Long {
+        val durationMs = dto.video?.duration?.coerceAtLeast(0L) ?: 0L
+        val candidates = buildList {
+            dto.play_progress?.play_progress
+                ?.takeIf { it > 0L }
+                ?.let(::add)
+            dto.history_info?.watched_duration
+                ?.takeIf { it > 0L }
+                ?.let(::add)
+            parseProgressRate(dto.history_info?.play_progress)
+                ?.takeIf { it in 0.0..1.0 }
+                ?.times(durationMs)
+                ?.toLong()
+                ?.takeIf { it > 0L }
+                ?.let(::add)
+            parseProgressRate(dto.history_progress_rate)
+                ?.takeIf { it in 0.0..1.0 }
+                ?.times(durationMs)
+                ?.toLong()
+                ?.takeIf { it > 0L }
+                ?.let(::add)
+        }
+        val progress = candidates.maxOrNull() ?: 0L
+        return if (durationMs > 0L) {
+            progress.coerceIn(0L, durationMs)
+        } else {
+            progress.coerceAtLeast(0L)
+        }
     }
 
     private fun mapCollection(dto: MixInfoDto): VideoCollection? {
@@ -982,9 +1354,17 @@ class DouyinApi(
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
                 "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         private const val WEB_HOST = "https://www.douyin.com"
+        private const val WRITE_HOST = "https://www-hj.douyin.com"
+        private const val DOUYIN_WEB_COOKIE_URL = "https://www.douyin.com"
         private const val IES_HOST = "https://www.iesdouyin.com"
         private const val LIVE_HOST = "https://live.douyin.com"
+        private val WEB_SEARCH_PARAMS = mapOf(
+            "device_platform" to "webapp",
+            "aid" to "6383",
+            "channel" to "channel_pc_web",
+        )
         private val FORM_MEDIA_TYPE = "application/x-www-form-urlencoded".toMediaType()
+        private const val CSRF_TOKEN_TTL_MS = 5 * 60_000L
     }
 }
 
@@ -996,5 +1376,10 @@ internal fun JsonElement?.asHasMore(): Boolean {
     }
     return primitive.booleanOrNull == true || primitive.intOrNull == 1
 }
+
+internal fun accountUidParam(uid: String): String =
+    MessageDigest.getInstance("MD5")
+        .digest(uid.trim().toByteArray(Charsets.UTF_8))
+        .joinToString("") { byte -> "%02x".format(byte) }
 
 class ApiException(message: String) : Exception(message)

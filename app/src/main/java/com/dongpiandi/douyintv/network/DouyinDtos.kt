@@ -4,10 +4,12 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 
 @Serializable
@@ -26,7 +28,37 @@ data class AwemeDto(
     val video: VideoDto? = null,
     val statistics: AwemeStatsDto? = null,
     val images: List<ImageDto>? = null,
+    val play_progress: PlayProgressDto? = null,
+    val history_info: HistoryInfoDto? = null,
+    val history_progress_rate: JsonElement? = null,
 )
+
+@Serializable
+data class PlayProgressDto(
+    val play_progress: Long = 0,
+    val watch_times: Long = 0,
+)
+
+@Serializable
+data class HistoryInfoDto(
+    val view_time: Long? = null,
+    val watched_duration: Long? = null,
+    val play_progress: JsonElement? = null,
+)
+
+internal fun parseProgressRate(raw: JsonElement?): Double? {
+    val primitive = raw as? JsonPrimitive ?: return null
+    if (primitive is JsonNull) return null
+    if (!primitive.isString) return primitive.doubleOrNull
+    val text = primitive.content.trim()
+    val numeric = text
+        .removePrefix("已看")
+        .removeSuffix("%")
+        .trim()
+        .toDoubleOrNull()
+        ?: return null
+    return if (text.endsWith("%")) numeric / 100.0 else numeric
+}
 
 @Serializable
 data class AuthorDto(
@@ -142,6 +174,8 @@ data class VideoListResponse(
     val cursor: Long = 0,
     val max_cursor: Long = 0,
     val has_more: Int = 0,
+    val aweme_date: Map<String, JsonElement>? = null,
+    val log_pb: JsonElement? = null,
 )
 
 @Serializable
@@ -229,12 +263,60 @@ data class SearchItemDto(
 data class FavoriteActionResponse(
     val status_code: Int = 0,
     val status_msg: String? = null,
+    val log_pb: JsonElement? = null,
 )
 
 @Serializable
 data class HistoryWriteResponse(
     val status_code: Int = 0,
     val status_msg: String? = null,
+    val log_pb: JsonElement? = null,
+)
+
+@Serializable
+data class WatchLaterActionResponse(
+    val status_code: Int = 0,
+    val status_msg: String? = null,
+    val removed_num: Int = 0,
+    val log_pb: JsonElement? = null,
+)
+
+@Serializable
+data class PlaybackProgressWriteResponse(
+    val status_code: Int = 0,
+    val status_msg: String? = null,
+    val log_pb: JsonElement? = null,
+)
+
+@Serializable
+internal data class WatchLaterUpsertPayload(
+    val item_to_playinfo: Map<String, WatchLaterPlayInfoDto>,
+    val action_type: Int = 1,
+)
+
+@Serializable
+internal data class WatchLaterPlayInfoDto(
+    val play_duration: Long = 0,
+    val loop_status: Int = 0,
+)
+
+@Serializable
+internal data class WatchLaterRemovePayload(
+    val remove_item_ids: List<String>,
+    val remove_type: Int = 0,
+)
+
+@Serializable
+internal data class FavoriteActionPayload(
+    val action: Int,
+    val aweme_id: String,
+    val aweme_type: Int = 0,
+)
+
+@Serializable
+internal data class FollowUserPayload(
+    val user_id: String,
+    val type: Int,
 )
 
 @Serializable
@@ -242,6 +324,7 @@ data class FollowUserResponse(
     val status_code: Int = 0,
     val status_msg: String? = null,
     val follow_status: Int? = null,
+    val log_pb: JsonElement? = null,
 )
 
 @Serializable

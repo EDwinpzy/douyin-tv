@@ -30,6 +30,8 @@ import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.PersonAdd
 import androidx.compose.material.icons.outlined.Star
+import androidx.compose.material.icons.outlined.WatchLater as WatchLaterOutlined
+import androidx.compose.material.icons.filled.WatchLater as WatchLaterFilled
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -42,6 +44,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -139,6 +142,10 @@ fun ShortsScreen(
     favoriteIds: Set<String>,
     favoritePendingIds: Set<String>,
     onToggleFavorite: (ShortVideo) -> Unit,
+    watchLaterIds: Set<String>,
+    watchLaterPendingIds: Set<String>,
+    watchLaterError: String?,
+    onToggleWatchLater: (ShortVideo) -> Unit,
     followStatusByAuthor: Map<String, Boolean>,
     followPendingAuthors: Set<String>,
     followError: String?,
@@ -149,7 +156,9 @@ fun ShortsScreen(
         authorUid: String,
         positionMs: Long,
         durationMs: Long,
+        flush: Boolean,
     ) -> Unit,
+    onPlaybackResumeConsumed: (Long) -> Unit,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -164,6 +173,8 @@ fun ShortsScreen(
     var selectedBottomAction by remember { mutableIntStateOf(0) }
     val overlayInteractionSignals = remember { Channel<Unit>(Channel.CONFLATED) }
     var videoFocused by remember { mutableStateOf(false) }
+    var chromeFocused by remember { mutableStateOf(false) }
+    var bottomActionsFocused by remember { mutableStateOf(false) }
     val performanceProfile = remember(context) {
         DevicePerformanceProfile.detect(context)
     }
@@ -177,12 +188,14 @@ fun ShortsScreen(
     val current = state.current
     var urlIndex by remember(current?.id) { mutableIntStateOf(0) }
     var readyVideoId by remember { mutableStateOf<String?>(null) }
+    var handledResumeToken by remember { mutableLongStateOf(0L) }
     val latestVideo by rememberUpdatedState(current)
     val latestUrlIndex by rememberUpdatedState(urlIndex)
     val latestPaused by rememberUpdatedState(state.paused)
     val latestOnEnded by rememberUpdatedState(onEnded)
     val latestOnError by rememberUpdatedState(onPlaybackError)
     val latestOnProgress by rememberUpdatedState(onPlaybackProgress)
+    val latestOnResumeConsumed by rememberUpdatedState(onPlaybackResumeConsumed)
     val activeUrl = current?.playUrls?.getOrNull(urlIndex)
     val commentsVisible = engagement.visible
     val lastPrepareRequestAt = remember { LongArray(1) }
@@ -197,12 +210,16 @@ fun ShortsScreen(
                 }
                 if (playbackState == Player.STATE_ENDED) {
                     val video = latestVideo
-                    if (video != null && player.duration > 0L) {
+                    val duration = video?.durationMs?.takeIf { it > 0L }
+                        ?: player.duration.takeIf { it > 0L }
+                        ?: 0L
+                    if (video != null && duration > 0L) {
                         latestOnProgress(
                             video.id,
                             video.authorUid,
-                            player.duration,
-                            player.duration,
+                            duration,
+                            duration,
+                            true,
                         )
                     }
                     latestOnEnded()
@@ -237,6 +254,19 @@ fun ShortsScreen(
     DisposableEffect(lifecycleOwner, player) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_PAUSE) {
+                val video = latestVideo
+                val duration = video?.durationMs?.takeIf { it > 0L }
+                    ?: player.duration.takeIf { it > 0L }
+                    ?: 0L
+                if (video != null && duration > 0L) {
+                    latestOnProgress(
+                        video.id,
+                        video.authorUid,
+                        player.currentPosition.coerceIn(0L, duration),
+                        duration,
+                        true,
+                    )
+                }
                 player.pause()
             } else if (event == Lifecycle.Event.ON_RESUME && !latestPaused) {
                 player.play()
@@ -274,7 +304,24 @@ fun ShortsScreen(
 
     LaunchedEffect(state.paused) {
         player.playWhenReady = !state.paused
-        if (state.paused) player.pause() else player.play()
+        if (state.paused) {
+            val video = current
+            val duration = video?.durationMs?.takeIf { it > 0L }
+                ?: player.duration.takeIf { it > 0L }
+                ?: 0L
+            if (video != null && duration > 0L) {
+                latestOnProgress(
+                    video.id,
+                    video.authorUid,
+                    player.currentPosition.coerceIn(0L, duration),
+                    duration,
+                    true,
+                )
+            }
+            player.pause()
+        } else {
+            player.play()
+        }
     }
 
     PlaybackProgressReporter(
@@ -285,6 +332,38 @@ fun ShortsScreen(
         intervalMs = performanceProfile.playbackProgressIntervalMs,
         onProgress = latestOnProgress,
     )
+
+    LaunchedEffect(
+        state.resumeToken,
+        state.resumeVideoId,
+        state.resumePositionMs,
+        readyVideoId,
+        current?.id,
+    ) {
+        val targetId = state.resumeVideoId ?: return@LaunchedEffect
+        if (
+            state.resumeToken <= handledResumeToken ||
+            state.resumePositionMs <= 0L ||
+            current?.id != targetId ||
+            readyVideoId != targetId
+        ) {
+            return@LaunchedEffect
+        }
+        val duration = player.duration.takeIf { it > 0L } ?: current.durationMs
+        val target = state.resumePositionMs.coerceIn(
+            0L,
+            duration.takeIf { it > 0L } ?: state.resumePositionMs,
+        )
+        player.seekTo(target)
+        player.playWhenReady = !state.paused
+        handledResumeToken = state.resumeToken
+        latestOnResumeConsumed(state.resumeToken)
+        Toast.makeText(
+            context,
+            "已从上次观看位置继续播放",
+            Toast.LENGTH_SHORT,
+        ).show()
+    }
 
     LaunchedEffect(current?.id) {
         if (current != null) onPrepareEngagement(current)
@@ -319,6 +398,8 @@ fun ShortsScreen(
         commentsVisible,
         sidePanelVisible,
         searchVisible,
+        chromeFocused,
+        bottomActionsFocused,
     ) {
         if (
             !overlayVisible ||
@@ -326,7 +407,9 @@ fun ShortsScreen(
             state.paused ||
             commentsVisible ||
             sidePanelVisible ||
-            searchVisible
+            searchVisible ||
+            chromeFocused ||
+            bottomActionsFocused
         ) {
             return@LaunchedEffect
         }
@@ -405,6 +488,12 @@ fun ShortsScreen(
         }
     }
 
+    LaunchedEffect(watchLaterError) {
+        watchLaterError?.takeIf { it.isNotBlank() }?.let { message ->
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+        }
+    }
+
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
@@ -447,7 +536,7 @@ fun ShortsScreen(
                 true
             },
     ) {
-        val infoWidth = (maxWidth * 0.28f).coerceAtMost(340.dp)
+        val infoWidth = (maxWidth * 0.34f).coerceIn(360.dp, 460.dp)
         val danmakuHeight = (maxHeight * DANMAKU_HEIGHT_FRACTION)
             .coerceAtLeast(72.dp)
         val rightPanelWidth = when {
@@ -578,6 +667,7 @@ fun ShortsScreen(
                     showHeaderActions = !sidePanelVisible,
                     onSearchClick = onSearchClick,
                     downFocusRequester = bottomActionsFocusRequester,
+                    onFocusChanged = { chromeFocused = it },
                     showMainNavigation = !state.source.isSidebarPlayback,
                 )
                 Spacer(Modifier.weight(1f))
@@ -603,6 +693,8 @@ fun ShortsScreen(
                     video = current,
                     favoriteSelected = current.id in favoriteIds,
                     favoritePending = current.id in favoritePendingIds,
+                    watchLaterSelected = current.id in watchLaterIds,
+                    watchLaterPending = current.id in watchLaterPendingIds,
                     followSelected = followStatusByAuthor[followKey]
                         ?: (current.authorFollowStatus > 0),
                     followPending = followKey in followPendingAuthors,
@@ -615,7 +707,10 @@ fun ShortsScreen(
                         onOpenComments(current)
                     },
                     onFavoriteClick = { onToggleFavorite(current) },
+                    onWatchLaterClick = { onToggleWatchLater(current) },
                     onFollowClick = { onToggleFollow(current) },
+                    onUserInteraction = { overlayInteractionSignals.trySend(Unit) },
+                    onFocusChanged = { bottomActionsFocused = it },
                     onAuthorClick = {
                         focusBottomActionsRequested = true
                         onOpenAuthor(current)
@@ -685,6 +780,7 @@ private fun PlaybackProgressReporter(
         authorUid: String,
         positionMs: Long,
         durationMs: Long,
+        flush: Boolean,
     ) -> Unit,
 ) {
     val latestOnProgress = rememberUpdatedState(onProgress)
@@ -695,12 +791,20 @@ private fun PlaybackProgressReporter(
         try {
             while (true) {
                 delay(intervalMs.coerceAtLeast(1_000L))
-                val duration = player.duration.takeIf { it > 0L } ?: fallbackDurationMs
+                val duration = fallbackDurationMs.takeIf { it > 0L }
+                    ?: player.duration.takeIf { it > 0L }
+                    ?: 0L
                 if (duration > 0L) {
                     val position = player.currentPosition.coerceIn(0L, duration)
                     lastPositionMs = position
                     lastDurationMs = duration
-                    latestOnProgress.value(videoId, authorUid, position, duration)
+                    latestOnProgress.value(
+                        videoId,
+                        authorUid,
+                        position,
+                        duration,
+                        false,
+                    )
                 }
             }
         } finally {
@@ -710,6 +814,7 @@ private fun PlaybackProgressReporter(
                     authorUid,
                     lastPositionMs,
                     lastDurationMs,
+                    true,
                 )
             }
         }
@@ -721,6 +826,8 @@ private fun ShortVideoInfo(
     video: ShortVideo,
     favoriteSelected: Boolean,
     favoritePending: Boolean,
+    watchLaterSelected: Boolean,
+    watchLaterPending: Boolean,
     followSelected: Boolean,
     followPending: Boolean,
     topFocusRequester: FocusRequester,
@@ -729,7 +836,10 @@ private fun ShortVideoInfo(
     onSelectedActionChange: (Int) -> Unit,
     onCommentsClick: () -> Unit,
     onFavoriteClick: () -> Unit,
+    onWatchLaterClick: () -> Unit,
     onFollowClick: () -> Unit,
+    onUserInteraction: () -> Unit,
+    onFocusChanged: (Boolean) -> Unit,
     onAuthorClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -811,15 +921,32 @@ private fun ShortVideoInfo(
                     up = topFocusRequester
                     down = FocusRequester.Cancel
                 }
-                .onFocusChanged { actionsFocused = it.isFocused }
+                .onFocusChanged {
+                    actionsFocused = it.isFocused
+                    onFocusChanged(it.isFocused)
+                }
                 .onPreviewKeyEvent { event ->
+                    if (event.type == KeyEventType.KeyDown) {
+                        onUserInteraction()
+                    }
                     when (event.key) {
                         Key.DirectionLeft, Key.DirectionRight -> {
                             if (event.type == KeyEventType.KeyDown) {
                                 val step = if (event.key == Key.DirectionLeft) -1 else 1
                                 onSelectedActionChange(
-                                    Math.floorMod(selectedAction + step, 4),
+                                    Math.floorMod(selectedAction + step, 5),
                                 )
+                            }
+                            true
+                        }
+
+                        Key.DirectionUp -> {
+                            if (
+                                event.type == KeyEventType.KeyDown &&
+                                event.nativeKeyEvent.repeatCount == 0
+                            ) {
+                                onUserInteraction()
+                                topFocusRequester.requestFocus()
                             }
                             true
                         }
@@ -832,7 +959,8 @@ private fun ShortVideoInfo(
                                 when (selectedAction) {
                                     0 -> onCommentsClick()
                                     1 -> onFavoriteClick()
-                                    2 -> onFollowClick()
+                                    2 -> onWatchLaterClick()
+                                    3 -> onFollowClick()
                                     else -> onAuthorClick()
                                 }
                             }
@@ -844,13 +972,14 @@ private fun ShortVideoInfo(
                 }
                 .focusable()
                 .semantics { contentDescription = "视频操作菜单" },
-            horizontalArrangement = Arrangement.SpaceEvenly,
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             VideoActionItem(
                 icon = Icons.Outlined.ChatBubbleOutline,
                 label = "评论",
                 focused = actionsFocused && selectedAction == 0,
+                modifier = Modifier.weight(1f),
             )
             VideoActionItem(
                 icon = if (favoriteSelected) Icons.Filled.Star else Icons.Outlined.Star,
@@ -861,6 +990,27 @@ private fun ShortVideoInfo(
                 },
                 selected = favoriteSelected,
                 focused = actionsFocused && selectedAction == 1,
+                modifier = Modifier.weight(1f),
+            )
+            VideoActionItem(
+                icon = if (watchLaterSelected) {
+                    Icons.Filled.WatchLaterFilled
+                } else {
+                    Icons.Outlined.WatchLaterOutlined
+                },
+                label = when {
+                    watchLaterPending -> "处理中"
+                    watchLaterSelected -> "已稍后"
+                    else -> "稍后"
+                },
+                semanticsLabel = if (watchLaterSelected) {
+                    "从稍后观看移除"
+                } else {
+                    "添加至稍后观看"
+                },
+                selected = watchLaterSelected,
+                focused = actionsFocused && selectedAction == 2,
+                modifier = Modifier.weight(1f),
             )
             VideoActionItem(
                 icon = if (followSelected) Icons.Filled.Check else Icons.Outlined.PersonAdd,
@@ -870,12 +1020,14 @@ private fun ShortVideoInfo(
                     else -> "关注"
                 },
                 selected = followSelected,
-                focused = actionsFocused && selectedAction == 2,
+                focused = actionsFocused && selectedAction == 3,
+                modifier = Modifier.weight(1f),
             )
             VideoActionItem(
                 icon = Icons.Outlined.Home,
                 label = "主页",
-                focused = actionsFocused && selectedAction == 3,
+                focused = actionsFocused && selectedAction == 4,
+                modifier = Modifier.weight(1f),
             )
         }
     }
@@ -885,11 +1037,13 @@ private fun ShortVideoInfo(
 private fun VideoActionItem(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
+    semanticsLabel: String = label,
     selected: Boolean = false,
     focused: Boolean,
+    modifier: Modifier = Modifier,
 ) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .clip(RoundedCornerShape(50))
             .background(
                 when {
@@ -917,29 +1071,33 @@ private fun VideoActionItem(
                 RoundedCornerShape(50),
             )
             .semantics(mergeDescendants = true) {
-                this.contentDescription = label
+                this.contentDescription = semanticsLabel
             }
-            .padding(horizontal = 6.dp, vertical = 7.dp),
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
+            .padding(horizontal = 2.dp, vertical = 7.dp),
+        horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
             imageVector = icon,
             contentDescription = null,
-            modifier = Modifier.size(16.dp),
+            modifier = Modifier.size(15.dp),
             tint = when {
                 focused -> FocusRing
                 selected -> Color(0xFFFFD45C)
                 else -> TextPrimary
             },
         )
+        Spacer(Modifier.width(2.dp))
         Text(
             text = label,
-            modifier = Modifier.clearAndSetSemantics { },
+            modifier = Modifier
+                .weight(1f, fill = false)
+                .clearAndSetSemantics { },
             color = if (focused) FocusRing else TextPrimary,
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Medium,
             maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
             softWrap = false,
         )
     }

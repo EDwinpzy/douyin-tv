@@ -23,6 +23,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -58,7 +59,7 @@ enum class SidebarKind {
 
 data class SidebarPlaybackReturn(
     val kind: SidebarKind,
-    val myHomeTab: MyHomeTab = MyHomeTab.PROFILE,
+    val myHomeTab: MyHomeTab = MyHomeTab.HISTORY,
     val authorTab: Int = 0,
     val videoId: String? = null,
     val collectionId: String? = null,
@@ -72,6 +73,9 @@ data class ShortsUiState(
     val loading: Boolean = false,
     val paused: Boolean = false,
     val error: String? = null,
+    val resumeVideoId: String? = null,
+    val resumePositionMs: Long = 0L,
+    val resumeToken: Long = 0L,
 ) {
     val current: ShortVideo?
         get() = videos.getOrNull(index)
@@ -123,10 +127,13 @@ data class FavoritesUiState(
 
 data class WatchLaterUiState(
     val videos: List<ShortVideo> = emptyList(),
+    val ids: Set<String> = emptySet(),
     val loading: Boolean = false,
     val loaded: Boolean = false,
     val loadingMore: Boolean = false,
     val error: String? = null,
+    val pendingIds: Set<String> = emptySet(),
+    val actionError: String? = null,
     val offset: Long = 0,
     val hasMore: Boolean = false,
     val progress: Map<String, PlaybackProgress> = emptyMap(),
@@ -226,7 +233,7 @@ data class AppUiState(
     val tab: MainTab = MainTab.SHORTS,
     val overlayVisible: Boolean = true,
     val accountMenuVisible: Boolean = false,
-    val myHomeTab: MyHomeTab = MyHomeTab.PROFILE,
+    val myHomeTab: MyHomeTab = MyHomeTab.HISTORY,
     val loginVisible: Boolean = false,
     val isLoggedIn: Boolean = false,
     val shorts: ShortsUiState = ShortsUiState(),
@@ -260,6 +267,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var accountHistoryGeneration = 0L
     private val accountHistoryWriteTimes = mutableMapOf<String, Long>()
     private var lastAccountHistoryWriteAtMs = 0L
+    private val playbackProgressWriteTimes = mutableMapOf<String, Long>()
+    private var sessionValidationJob: Job? = null
+    private var sessionGeneration = 0L
     private var lastProgressVideoId: String? = null
     private var lastProgressPositionMs = 0L
     private var lastProgressDurationMs = 0L
@@ -292,7 +302,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         loadShorts(reset = true)
         if (sessionStore.hasSession()) {
+            refreshSessionFromWebView()
             loadFavorites(reset = true)
+            loadWatchLater(reset = true)
         }
     }
 
@@ -536,6 +548,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 ),
             )
         }
+        Log.d(TAG, "follow toggle requested following=$shouldFollow")
         viewModelScope.launch {
             runCatching {
                 api.setFollow(
@@ -545,6 +558,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
                 .onSuccess { followed ->
+                    Log.d(TAG, "follow toggle ok following=$followed")
                     _state.update { state ->
                         val profile = state.authorVideos.profile
                         val updateProfile = state.authorVideos.authorSecUid ==
@@ -569,7 +583,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 .onFailure { error ->
-                    if (clearInvalidSession(error)) return@onFailure
+                    Log.w(
+                        TAG,
+                        "follow toggle failed: ${error.message.orEmpty().take(160)}",
+                    )
+                    clearInvalidSession(error)
                     _state.update {
                         it.copy(
                             follows = it.follows.copy(
@@ -626,12 +644,78 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 .onFailure { error ->
-                    if (clearInvalidSession(error)) return@onFailure
+                    Log.w(
+                        TAG,
+                        "favorite toggle failed: ${error.message.orEmpty().take(160)}",
+                    )
+                    clearInvalidSession(error)
                     _state.update {
                         it.copy(
                             favorites = it.favorites.copy(
                                 pendingIds = it.favorites.pendingIds - video.id,
                                 error = error.toDisplayMessage("收藏操作失败"),
+                            ),
+                        )
+                    }
+                }
+        }
+    }
+
+    fun toggleWatchLater(video: ShortVideo) {
+        val current = _state.value
+        if (!current.isLoggedIn) {
+            openLogin()
+            return
+        }
+        if (video.id.isBlank() || video.id in current.watchLater.pendingIds) return
+        val shouldAdd = video.id !in current.watchLater.ids
+        _state.update {
+            it.copy(
+                watchLater = it.watchLater.copy(
+                    pendingIds = it.watchLater.pendingIds + video.id,
+                    actionError = null,
+                ),
+            )
+        }
+        viewModelScope.launch {
+            runCatching { api.setWatchLater(video.id, shouldAdd) }
+                .onSuccess {
+                    _state.update { state ->
+                        val ids = if (shouldAdd) {
+                            state.watchLater.ids + video.id
+                        } else {
+                            state.watchLater.ids - video.id
+                        }
+                        val videos = if (shouldAdd) {
+                            listOf(video) +
+                                state.watchLater.videos.filterNot { it.id == video.id }
+                        } else {
+                            state.watchLater.videos.filterNot { it.id == video.id }
+                        }
+                        state.copy(
+                            watchLater = state.watchLater.copy(
+                                ids = ids,
+                                videos = videos,
+                                pendingIds = state.watchLater.pendingIds - video.id,
+                                actionError = null,
+                                progress = progressStore.load(
+                                    videos.map(ShortVideo::id),
+                                ),
+                            ),
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    Log.w(
+                        TAG,
+                        "watch later toggle failed: ${error.message.orEmpty().take(160)}",
+                    )
+                    clearInvalidSession(error)
+                    _state.update {
+                        it.copy(
+                            watchLater = it.watchLater.copy(
+                                pendingIds = it.watchLater.pendingIds - video.id,
+                                actionError = error.toDisplayMessage("稍后观看操作失败"),
                             ),
                         )
                     }
@@ -676,6 +760,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun retryAccountHistory() {
+        refreshSessionFromWebView()
         loadAccountHistory(reset = true)
     }
 
@@ -1026,9 +1111,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         authorUid: String,
         positionMs: Long,
         durationMs: Long,
+        flush: Boolean = false,
     ) {
         if (videoId.isBlank() || durationMs <= 0L) return
         val resolvedPosition = positionMs.coerceIn(0L, durationMs)
+        val previousVideoId = lastProgressVideoId
+        val previousPositionMs = lastProgressPositionMs
+        val previousDurationMs = lastProgressDurationMs
         progressCommands.trySend(
             PlaybackProgressCommand.Save(
                 videoId = videoId,
@@ -1040,6 +1129,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             videoId = videoId,
             positionMs = resolvedPosition,
             durationMs = durationMs,
+        )
+        if (previousVideoId != null && previousVideoId != videoId) {
+            maybeWritePlaybackProgress(
+                videoId = previousVideoId,
+                positionMs = previousPositionMs,
+                durationMs = previousDurationMs,
+                force = true,
+            )
+        }
+        maybeWritePlaybackProgress(
+            videoId = videoId,
+            positionMs = resolvedPosition,
+            durationMs = durationMs,
+            force = flush,
         )
         maybeWriteAccountHistory(
             videoId = videoId,
@@ -1092,6 +1195,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun consumePlaybackResume(token: Long) {
+        _state.update {
+            if (it.shorts.resumeToken != token) {
+                it
+            } else {
+                it.copy(
+                    shorts = it.shorts.copy(
+                        resumeVideoId = null,
+                        resumePositionMs = 0L,
+                    ),
+                )
+            }
+        }
+    }
+
     fun selectTab(tab: MainTab) {
         _state.update {
             it.copy(
@@ -1111,7 +1229,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (shorts.index <= 0) {
                 current
             } else {
-                current.copy(shorts = shorts.copy(index = shorts.index - 1, paused = false))
+                current.copy(
+                    shorts = shorts.copy(
+                        index = shorts.index - 1,
+                        paused = false,
+                        resumeVideoId = null,
+                        resumePositionMs = 0L,
+                    ),
+                )
             }
         }
         prefetchShortsIfNeeded()
@@ -1125,6 +1250,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     shorts = it.shorts.copy(
                         index = it.shorts.index + 1,
                         paused = false,
+                        resumeVideoId = null,
+                        resumePositionMs = 0L,
                     ),
                 )
             }
@@ -1274,10 +1401,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun completeLogin(cookieHeader: String) {
         if (!sessionStore.saveCookieHeader(cookieHeader)) return
         CookieManager.getInstance().flush()
+        sessionGeneration += 1L
+        sessionValidationJob?.cancel()
+        sessionValidationJob = null
         lastSessionValidationAtMs = System.currentTimeMillis()
         invalidateAccountSession()
         accountHistoryWriteTimes.clear()
         lastAccountHistoryWriteAtMs = 0L
+        playbackProgressWriteTimes.clear()
         resetPreviousPlayback()
         val myHomeVisible = _state.value.accountMenuVisible
         val myHomeTab = _state.value.myHomeTab
@@ -1292,12 +1423,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         loadShorts(reset = true)
         loadFavorites(reset = true)
+        loadWatchLater(reset = true)
         if (myHomeVisible) {
             refreshMyHomeTab(myHomeTab)
         }
+        viewModelScope.launch {
+            delay(1_000)
+            refreshSessionFromWebView()
+        }
     }
 
-    fun showAccountMenu(tab: MyHomeTab = MyHomeTab.PROFILE) {
+    fun showAccountMenu(tab: MyHomeTab = MyHomeTab.HISTORY) {
         val current = _state.value
         _state.update {
             it.copy(
@@ -1367,6 +1503,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun refreshMyHomeTab(tab: MyHomeTab) {
+        refreshSessionFromWebView()
         when (tab) {
             MyHomeTab.FAVORITES -> loadFavorites(reset = true, keepContent = true)
             MyHomeTab.WATCH_LATER -> loadWatchLater(reset = true, keepContent = true)
@@ -1383,6 +1520,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val now = System.currentTimeMillis()
         if (now - lastSessionValidationAtMs < SESSION_VALIDATION_INTERVAL_MS) return
         lastSessionValidationAtMs = now
+        refreshSessionFromWebView()
         viewModelScope.launch {
             runCatching { api.loadSelfProfile() }
                 .onSuccess { profile ->
@@ -1400,11 +1538,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun logout() {
+        sessionGeneration += 1L
+        sessionValidationJob?.cancel()
+        sessionValidationJob = null
         invalidateAccountSession()
         sessionStore.clear()
         lastSessionValidationAtMs = 0L
         accountHistoryWriteTimes.clear()
         lastAccountHistoryWriteAtMs = 0L
+        playbackProgressWriteTimes.clear()
         resetPreviousPlayback()
         CookieManager.getInstance().removeAllCookies {
             CookieManager.getInstance().flush()
@@ -1468,7 +1610,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 .onFailure { error ->
-                    if (clearInvalidSession(error)) return@onFailure
+                    clearInvalidSession(error)
                     _state.update {
                         it.copy(
                             favorites = it.favorites.copy(
@@ -1512,9 +1654,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         }
                         val merged = (existing + page.videos)
                             .distinctBy(ShortVideo::id)
+                        val ids = if (reset) {
+                            page.videos.mapTo(mutableSetOf(), ShortVideo::id)
+                        } else {
+                            state.watchLater.ids +
+                                page.videos.map(ShortVideo::id)
+                        }
                         state.copy(
                             watchLater = state.watchLater.copy(
                                 videos = merged,
+                                ids = ids,
                                 loading = false,
                                 loaded = true,
                                 loadingMore = false,
@@ -1527,7 +1676,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 .onFailure { error ->
-                    if (clearInvalidSession(error)) return@onFailure
+                    clearInvalidSession(error)
                     _state.update {
                         it.copy(
                             watchLater = it.watchLater.copy(
@@ -1571,6 +1720,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 ) {
                     return@launch
                 }
+                val local = progressStore.history()
+                val localIds = local.mapTo(HashSet()) { it.video.id }
+                Log.d(
+                    TAG,
+                    "account history merge: account=${page.videos.size} " +
+                        "local=${local.size} " +
+                        "new=${page.videos.count { it.id !in localIds }} " +
+                        "cursor=${page.cursor} hasMore=${page.hasMore}",
+                )
                 _state.update { state ->
                     val existing = if (reset) {
                         emptyList()
@@ -1592,7 +1750,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 page.cursor > cursor,
                         ),
                         history = mergeAccountHistory(
-                            progressStore.history(),
+                            local,
                             merged,
                         ),
                     )
@@ -1606,7 +1764,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 ) {
                     return@launch
                 }
-                if (clearInvalidSession(error)) return@launch
+                Log.w(
+                    TAG,
+                    "account history read failed: ${error.message.orEmpty().take(160)}",
+                )
+                clearInvalidSession(error)
                 _state.update {
                     it.copy(
                         accountHistory = it.accountHistory.copy(
@@ -1668,6 +1830,63 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         historyWriteChainVideoSeen = 0
     }
 
+    private fun maybeWritePlaybackProgress(
+        videoId: String,
+        positionMs: Long,
+        durationMs: Long,
+        force: Boolean,
+    ) {
+        if (!_state.value.isLoggedIn) return
+        val now = System.currentTimeMillis()
+        if (
+            !PlaybackProgressSyncPolicy.shouldWrite(
+                positionMs = positionMs,
+                durationMs = durationMs,
+                nowMs = now,
+                lastWriteForVideoAtMs = playbackProgressWriteTimes[videoId],
+                force = force,
+            )
+        ) {
+            return
+        }
+        playbackProgressWriteTimes[videoId] = now
+        if (playbackProgressWriteTimes.size > PLAYBACK_PROGRESS_WRITE_CACHE_LIMIT) {
+            val iterator = playbackProgressWriteTimes.entries.iterator()
+            while (iterator.hasNext()) {
+                if (now - iterator.next().value >=
+                    PLAYBACK_PROGRESS_WRITE_CACHE_TTL_MS
+                ) {
+                    iterator.remove()
+                }
+            }
+        }
+        val persistedPosition = PlaybackProgressSyncPolicy.persistedPositionMs(
+            positionMs = positionMs,
+            durationMs = durationMs,
+        )
+        viewModelScope.launch {
+            runCatching {
+                api.writePlaybackProgress(
+                    itemId = videoId,
+                    durationMs = durationMs,
+                    positionMs = persistedPosition,
+                )
+            }
+                .onSuccess {
+                    Log.d(TAG, "playback progress write ok videoId=$videoId")
+                }
+                .onFailure { error ->
+                    Log.w(
+                        TAG,
+                        "playback progress write failed videoId=$videoId " +
+                            "duration=$durationMs position=$persistedPosition: " +
+                            error.message.orEmpty().take(160),
+                    )
+                    clearInvalidSession(error)
+                }
+        }
+    }
+
     private fun maybeWriteAccountHistory(
         videoId: String,
         authorUid: String,
@@ -1717,11 +1936,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     Log.d(TAG, "account history write ok videoId=$videoId")
                 }
                 .onFailure { error ->
-                    if (clearInvalidSession(error)) return@onFailure
                     Log.w(
                         TAG,
-                        "account history write failed videoId=$videoId: ${error.message}",
+                        "account history write failed videoId=$videoId: " +
+                            error.message.orEmpty().take(160),
                     )
+                    clearInvalidSession(error)
                 }
         }
     }
@@ -1781,7 +2001,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 .onFailure { error ->
-                    if (clearInvalidSession(error)) return@onFailure
+                    clearInvalidSession(error)
                     _state.update {
                         it.copy(
                             myProfile = it.myProfile.copy(
@@ -2222,6 +2442,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         val ordered = sourceVideos.ifEmpty { listOf(video) }
         val index = ordered.indexOfFirst { it.id == video.id }.takeIf { it >= 0 } ?: 0
+        val localProgress = progressStore.load(listOf(video.id))[video.id]
+        val resumePosition = resumePositionMs(
+            local = localProgress,
+            remotePositionMs = video.remoteProgressMs,
+            durationMs = localProgress?.durationMs?.takeIf { it > 0L }
+                ?: video.durationMs,
+        )
         _state.update {
             it.copy(
                 tab = MainTab.SHORTS,
@@ -2244,6 +2471,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     loading = false,
                     paused = false,
                     error = null,
+                    resumeVideoId = video.id.takeIf { resumePosition > 0L },
+                    resumePositionMs = resumePosition,
+                    resumeToken = it.shorts.resumeToken + 1L,
                 ),
             )
         }
@@ -2322,6 +2552,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             index = if (reset) 0 else it.shorts.index,
                             page = if (reset) 0 else it.shorts.page,
                             source = ShortsSource.RECOMMEND,
+                            resumeVideoId = null,
+                            resumePositionMs = 0L,
                         ),
                     )
                 }
@@ -2368,37 +2600,97 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun clearInvalidSession(error: Throwable): Boolean {
         val message = error.message.orEmpty()
-        val authenticationRequired = message.contains("未登录") ||
+        if (!isAuthenticationRequiredMessage(message)) return false
+
+        Log.w(TAG, "session rejected once, scheduling verification")
+        refreshSessionFromWebView()
+        scheduleSessionRevalidation()
+        return true
+    }
+
+    private fun scheduleSessionRevalidation() {
+        if (sessionValidationJob?.isActive == true) return
+        val generation = sessionGeneration
+        sessionValidationJob = viewModelScope.launch {
+            delay(SESSION_RECHECK_DELAY_MS)
+            if (
+                generation != sessionGeneration ||
+                !sessionStore.hasSession()
+            ) {
+                return@launch
+            }
+            refreshSessionFromWebView()
+            val result = runCatching { api.loadSelfProfile() }
+            result.getOrNull()?.let { profile ->
+                lastSessionValidationAtMs = System.currentTimeMillis()
+                _state.update {
+                    it.copy(
+                        myProfile = it.myProfile.copy(
+                            profile = profile,
+                            loading = false,
+                            error = null,
+                        ),
+                    )
+                }
+                return@launch
+            }
+            val message = result.exceptionOrNull()?.message.orEmpty()
+            if (!isAuthenticationRequiredMessage(message)) {
+                Log.w(
+                    TAG,
+                    "session verification inconclusive: ${message.take(160)}",
+                )
+                return@launch
+            }
+            Log.w(TAG, "session verification confirmed logout")
+            sessionGeneration += 1L
+            invalidateAccountSession()
+            lastSessionValidationAtMs = 0L
+            accountHistoryWriteTimes.clear()
+            lastAccountHistoryWriteAtMs = 0L
+            playbackProgressWriteTimes.clear()
+            resetPreviousPlayback()
+            sessionStore.clear()
+            CookieManager.getInstance().removeAllCookies {
+                CookieManager.getInstance().flush()
+                _state.update {
+                    it.copy(
+                        isLoggedIn = false,
+                        loginVisible = false,
+                        favorites = FavoritesUiState(),
+                        watchLater = WatchLaterUiState(),
+                        accountHistory = AccountHistoryUiState(),
+                        history = progressStore.history(),
+                        follows = FollowUiState(),
+                        myProfile = MyProfileUiState(),
+                        authorVideos = AuthorVideosUiState(),
+                        search = SearchUiState(),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun isAuthenticationRequiredMessage(message: String): Boolean =
+        message.contains("未登录") ||
             message.contains("请先登录") ||
             message.contains("登录已失效") ||
             message.contains("登录失效") ||
             message.contains("重新登录")
-        if (!authenticationRequired) return false
 
-        invalidateAccountSession()
-        lastSessionValidationAtMs = 0L
-        accountHistoryWriteTimes.clear()
-        lastAccountHistoryWriteAtMs = 0L
-        resetPreviousPlayback()
-        sessionStore.clear()
-        CookieManager.getInstance().removeAllCookies {
-            CookieManager.getInstance().flush()
-            _state.update {
-                it.copy(
-                    isLoggedIn = false,
-                    loginVisible = false,
-                    favorites = FavoritesUiState(),
-                    watchLater = WatchLaterUiState(),
-                    accountHistory = AccountHistoryUiState(),
-                    history = progressStore.history(),
-                    follows = FollowUiState(),
-                    myProfile = MyProfileUiState(),
-                    authorVideos = AuthorVideosUiState(),
-                    search = SearchUiState(),
-                )
+    private fun refreshSessionFromWebView() {
+        if (!sessionStore.hasSession()) return
+        runCatching {
+            val fresh = CookieManager.getInstance().getCookie(DOUYIN_WEB_COOKIE_URL)
+            if (sessionStore.mergeCookieHeader(fresh)) {
+                CookieManager.getInstance().flush()
             }
+        }.onFailure { error ->
+            Log.w(
+                TAG,
+                "session cookie refresh failed: ${error.message.orEmpty().take(160)}",
+            )
         }
-        return true
     }
 
     private fun invalidateAccountSession() {
@@ -2409,7 +2701,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private companion object {
         const val SESSION_VALIDATION_INTERVAL_MS = 60_000L
+        const val SESSION_RECHECK_DELAY_MS = 1_500L
+        const val DOUYIN_WEB_COOKIE_URL = "https://www.douyin.com"
         const val ACCOUNT_HISTORY_WRITE_CACHE_LIMIT = 500
+        const val PLAYBACK_PROGRESS_WRITE_CACHE_LIMIT = 500
+        const val PLAYBACK_PROGRESS_WRITE_CACHE_TTL_MS = 24 * 60 * 60_000L
         const val TAG = "DouyinTvHistory"
     }
 

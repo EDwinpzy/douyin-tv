@@ -15,6 +15,7 @@ data class ShortVideo(
     val commentCount: Long,
     val authorUid: String = "",
     val authorFollowStatus: Int = 0,
+    val remoteProgressMs: Long = 0,
 ) {
     val aspectRatio: Float?
         get() = if (videoWidth > 0 && videoHeight > 0) {

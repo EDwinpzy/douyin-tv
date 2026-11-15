@@ -7,6 +7,7 @@ import com.dongpiandi.douyintv.data.PlaybackProgressStore
 import com.dongpiandi.douyintv.data.SessionStore
 import com.dongpiandi.douyintv.network.AbogusSigner
 import com.dongpiandi.douyintv.network.DouyinApi
+import com.dongpiandi.douyintv.network.DouyinWebTransport
 
 class DouyinTvApplication : Application() {
     lateinit var container: AppContainer
@@ -24,9 +25,11 @@ class AppContainer(application: Application) {
     val identityStore = DeviceIdentityStore(application, signer)
     val sessionStore = SessionStore(application)
     val progressStore = PlaybackProgressStore(application)
+    val webTransport = DouyinWebTransport(application, sessionStore)
     val api = DouyinApi(
         identityStore = identityStore,
         sessionStore = sessionStore,
         signer = signer,
+        webTransport = webTransport,
     )
 }
