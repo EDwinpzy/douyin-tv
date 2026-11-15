@@ -50,6 +50,79 @@ class AccountHistoryTest {
     }
 
     @Test
+    fun usesCloudPlaybackProgressForResume() {
+        val local = listOf(entry("local", positionMs = 2_000L))
+        val account = listOf(
+            video("local", remoteProgressMs = 7_000L),
+            video("cloud", remoteProgressMs = 4_000L),
+        )
+
+        val merged = mergeAccountHistory(local, account)
+
+        assertEquals(7_000L, merged[0].progress.positionMs)
+        assertEquals(4_000L, merged[1].progress.positionMs)
+        assertEquals(6_000L, resumePositionMs(null, 6_000L, 10_000L))
+        assertEquals(0L, resumePositionMs(null, 9_500L, 10_000L))
+    }
+
+    @Test
+    fun writesPlaybackProgressOnlyOnFlushAndResetsCompletedVideos() {
+        assertFalse(
+            PlaybackProgressSyncPolicy.shouldWrite(
+                positionMs = 2_000L,
+                durationMs = 200_000L,
+                nowMs = 100_000L,
+                lastWriteForVideoAtMs = null,
+                force = false,
+            ),
+        )
+        assertTrue(
+            PlaybackProgressSyncPolicy.shouldWrite(
+                positionMs = 8_000L,
+                durationMs = 200_000L,
+                nowMs = 110_000L,
+                lastWriteForVideoAtMs = null,
+                force = true,
+            ),
+        )
+        assertFalse(
+            PlaybackProgressSyncPolicy.shouldWrite(
+                positionMs = 8_000L,
+                durationMs = 200_000L,
+                nowMs = 101_000L,
+                lastWriteForVideoAtMs = 100_000L,
+                force = true,
+            ),
+        )
+        assertEquals(
+            0L,
+            PlaybackProgressSyncPolicy.persistedPositionMs(199_500L, 200_000L),
+        )
+        assertEquals(
+            18_000L,
+            PlaybackProgressSyncPolicy.persistedPositionMs(18_000L, 20_000L),
+        )
+        assertTrue(
+            PlaybackProgressSyncPolicy.shouldWrite(
+                positionMs = 8_000L,
+                durationMs = 20_000L,
+                nowMs = 200_000L,
+                lastWriteForVideoAtMs = null,
+                force = true,
+            ),
+        )
+        assertFalse(
+            PlaybackProgressSyncPolicy.shouldWrite(
+                positionMs = 1_500L,
+                durationMs = 120_000L,
+                nowMs = 200_000L,
+                lastWriteForVideoAtMs = null,
+                force = true,
+            ),
+        )
+    }
+
+    @Test
     fun computesWatchThresholdFromDuration() {
         assertEquals(2_000L, AccountHistoryWritePolicy.thresholdMs(3_000L))
         assertEquals(3_000L, AccountHistoryWritePolicy.thresholdMs(15_000L))
@@ -127,6 +200,7 @@ class AccountHistoryTest {
     private fun video(
         id: String,
         playUrls: List<String> = listOf("https://example.com/$id.mp4"),
+        remoteProgressMs: Long = 0L,
     ): ShortVideo = ShortVideo(
         id = id,
         description = "",
@@ -138,5 +212,6 @@ class AccountHistoryTest {
         durationMs = 10_000L,
         likeCount = 0L,
         commentCount = 0L,
+        remoteProgressMs = remoteProgressMs,
     )
 }

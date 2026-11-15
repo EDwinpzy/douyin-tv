@@ -148,6 +148,7 @@ class PlaybackProgressStore(context: Context) {
         val commentCount: Long = 0,
         val authorUid: String = "",
         val authorFollowStatus: Int = 0,
+        val remoteProgressMs: Long = 0,
     ) {
         fun toShortVideo(): ShortVideo? {
             if (id.isBlank() || playUrls.isEmpty()) return null
@@ -166,6 +167,7 @@ class PlaybackProgressStore(context: Context) {
                 commentCount = commentCount,
                 authorUid = authorUid,
                 authorFollowStatus = authorFollowStatus,
+                remoteProgressMs = remoteProgressMs,
             )
         }
 
@@ -185,6 +187,7 @@ class PlaybackProgressStore(context: Context) {
                 commentCount = video.commentCount,
                 authorUid = video.authorUid,
                 authorFollowStatus = video.authorFollowStatus,
+                remoteProgressMs = video.remoteProgressMs,
             )
         }
     }

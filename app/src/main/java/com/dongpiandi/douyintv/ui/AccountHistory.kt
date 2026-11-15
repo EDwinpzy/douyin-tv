@@ -14,11 +14,21 @@ internal fun mergeAccountHistory(
     val merged = ArrayList<PlaybackHistoryEntry>(local.size + account.size)
     account.forEach { video ->
         if (video.id.isBlank() || !seen.add(video.id)) return@forEach
-        merged += localById[video.id]?.copy(video = video) ?: PlaybackHistoryEntry(
+        val localEntry = localById[video.id]
+        val durationMs = localEntry?.progress?.durationMs
+            ?.takeIf { it > 0L }
+            ?: video.durationMs.coerceAtLeast(0L)
+        val positionMs = resumePositionMs(
+            local = localEntry?.progress,
+            remotePositionMs = video.remoteProgressMs,
+            durationMs = durationMs,
+        )
+        merged += PlaybackHistoryEntry(
             video = video,
             progress = PlaybackProgress(
-                positionMs = 0L,
-                durationMs = video.durationMs.coerceAtLeast(0L),
+                positionMs = positionMs,
+                durationMs = durationMs,
+                updatedAtMs = localEntry?.progress?.updatedAtMs ?: 0L,
             ),
         )
     }
@@ -26,6 +36,39 @@ internal fun mergeAccountHistory(
         if (seen.add(entry.video.id)) merged += entry
     }
     return merged
+}
+
+internal fun resumablePositionMs(progress: PlaybackProgress?): Long {
+    if (progress == null || progress.durationMs <= 0L) return 0L
+    if (progress.positionMs < 1_000L) return 0L
+    if (progress.positionMs >= progress.durationMs - 2_000L) return 0L
+    return progress.positionMs
+}
+
+internal fun resumePositionMs(
+    local: PlaybackProgress?,
+    remotePositionMs: Long,
+    durationMs: Long,
+): Long {
+    val resolvedDuration = durationMs.takeIf { it > 0L }
+        ?: local?.durationMs
+        ?: 0L
+    if (
+        local != null &&
+        resolvedDuration > 0L &&
+        local.positionMs >= resolvedDuration - 2_000L
+    ) {
+        return 0L
+    }
+    return maxOf(
+        resumablePositionMs(local),
+        resumablePositionMs(
+            PlaybackProgress(
+                positionMs = remotePositionMs.coerceAtLeast(0L),
+                durationMs = resolvedDuration,
+            ),
+        ),
+    )
 }
 
 internal object AccountHistoryWritePolicy {
@@ -56,4 +99,26 @@ internal object AccountHistoryWritePolicy {
         }
         return true
     }
+}
+
+internal object PlaybackProgressSyncPolicy {
+    const val MIN_PROGRESS_MS = 2_000L
+    const val FORCE_MIN_INTERVAL_MS = 2_000L
+
+    fun shouldWrite(
+        positionMs: Long,
+        durationMs: Long,
+        nowMs: Long,
+        lastWriteForVideoAtMs: Long?,
+        force: Boolean,
+    ): Boolean {
+        if (durationMs <= 0L || positionMs <= 0L) return false
+        if (!force) return false
+        if (positionMs < MIN_PROGRESS_MS) return false
+        if (lastWriteForVideoAtMs == null) return true
+        return nowMs - lastWriteForVideoAtMs >= FORCE_MIN_INTERVAL_MS
+    }
+
+    fun persistedPositionMs(positionMs: Long, durationMs: Long): Long =
+        if (durationMs > 0L && positionMs >= durationMs - 1_000L) 0L else positionMs
 }

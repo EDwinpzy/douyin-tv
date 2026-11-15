@@ -35,6 +35,9 @@ class MainActivity : ComponentActivity() {
                 DouyinTvApp(viewModel = viewModel)
             }
         }
+        (application as DouyinTvApplication).container.webTransport.attachHost(
+            window.decorView as android.view.ViewGroup,
+        )
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 DouyinVoiceCommandQueue.incoming.collect { queued ->

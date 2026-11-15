@@ -9,6 +9,26 @@ class DouyinWatchLaterDtoTest {
         ignoreUnknownKeys = true
         coerceInputValues = true
         isLenient = true
+        encodeDefaults = true
+    }
+
+    @Test
+    fun serializesWatchLaterActionFieldsEvenWhenTheyUseDefaults() {
+        val payload = WatchLaterUpsertPayload(
+            item_to_playinfo = mapOf(
+                "7700000000000000001" to WatchLaterPlayInfoDto(),
+            ),
+        )
+
+        val encoded = json.encodeToString(
+            WatchLaterUpsertPayload.serializer(),
+            payload,
+        )
+
+        assertEquals(
+            """{"item_to_playinfo":{"7700000000000000001":{"play_duration":0,"loop_status":0}},"action_type":1}""",
+            encoded,
+        )
     }
 
     @Test

@@ -72,6 +72,7 @@ fun TopChrome(
     showHeaderActions: Boolean = true,
     onSearchClick: (() -> Unit)? = null,
     downFocusRequester: FocusRequester? = null,
+    onFocusChanged: ((Boolean) -> Unit)? = null,
     focusEnabled: Boolean = true,
     showMainNavigation: Boolean = true,
 ) {
@@ -122,6 +123,7 @@ fun TopChrome(
             }
             .onFocusChanged {
                 menuFocused = it.isFocused
+                onFocusChanged?.invoke(it.isFocused)
                 if (it.isFocused) {
                     focusedIndex = defaultFocusedIndex
                     onUserInteraction?.invoke()
@@ -150,6 +152,22 @@ fun TopChrome(
                             onUserInteraction?.invoke()
                         }
                         true
+                    }
+
+                    Key.DirectionDown -> {
+                        val target = downFocusRequester
+                        if (target == null) {
+                            false
+                        } else {
+                            if (
+                                event.type == KeyEventType.KeyDown &&
+                                event.nativeKeyEvent.repeatCount == 0
+                            ) {
+                                onUserInteraction?.invoke()
+                                target.requestFocus()
+                            }
+                            true
+                        }
                     }
 
                     else -> false
