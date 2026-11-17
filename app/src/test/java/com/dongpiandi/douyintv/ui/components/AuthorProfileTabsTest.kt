@@ -1,14 +1,15 @@
 package com.dongpiandi.douyintv.ui.components
 
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
+import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class AuthorProfileTabsTest {
     @Test
-    fun showsCollectionsTabBeforeLoadCompletes() {
-        assertTrue(
-            shouldShowAuthorCollectionsTab(
+    fun keepsCollectionsTabBeforeLoadCompletes() {
+        assertEquals(
+            listOf("视频 12", "合集"),
+            authorProfileTabLabels(
+                videoCount = 12,
                 collectionsLoaded = false,
                 collectionCount = 0,
             ),
@@ -16,21 +17,25 @@ class AuthorProfileTabsTest {
     }
 
     @Test
-    fun showsCollectionsTabWhenCollectionsExist() {
-        assertTrue(
-            shouldShowAuthorCollectionsTab(
+    fun keepsEmptyCollectionsTabAfterLoad() {
+        assertEquals(
+            listOf("视频 12", "合集 0"),
+            authorProfileTabLabels(
+                videoCount = 12,
                 collectionsLoaded = true,
-                collectionCount = 15,
+                collectionCount = 0,
             ),
         )
     }
 
     @Test
-    fun hidesCollectionsTabWhenLoadedEmpty() {
-        assertFalse(
-            shouldShowAuthorCollectionsTab(
+    fun showsCollectionCountWhenCollectionsExist() {
+        assertEquals(
+            listOf("视频 12", "合集 15"),
+            authorProfileTabLabels(
+                videoCount = 12,
                 collectionsLoaded = true,
-                collectionCount = 0,
+                collectionCount = 15,
             ),
         )
     }

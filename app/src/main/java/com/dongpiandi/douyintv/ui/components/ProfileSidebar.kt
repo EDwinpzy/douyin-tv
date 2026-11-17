@@ -333,11 +333,7 @@ fun AuthorProfileSidebar(
     var selectedTab by remember {
         mutableIntStateOf(restoreTab?.coerceIn(0, 1) ?: 0)
     }
-    val showCollectionsTab = shouldShowAuthorCollectionsTab(
-        collectionsLoaded = collectionsLoaded,
-        collectionCount = collections.size,
-    )
-    val activeTab = if (showCollectionsTab && selectedTab == 1) 1 else 0
+    val activeTab = selectedTab.coerceIn(0, 1)
     val tabRequesters = remember { listOf(FocusRequester(), FocusRequester()) }
     val firstVideoFocusRequester = remember { FocusRequester() }
     val firstCollectionFocusRequester = remember { FocusRequester() }
@@ -357,14 +353,6 @@ fun AuthorProfileSidebar(
             tabRequesters.first().requestFocus()
         }
     }
-    LaunchedEffect(showCollectionsTab) {
-        if (!showCollectionsTab && selectedTab != 0) {
-            selectedTab = 0
-            delay(40)
-            tabRequesters.first().requestFocus()
-        }
-    }
-
     SidebarFrame(
         title = "@${profile?.nickname ?: fallbackName.ifBlank { "博主" }}的主页",
         onClose = onClose,
@@ -391,12 +379,11 @@ fun AuthorProfileSidebar(
         }
         Spacer(Modifier.height(8.dp))
         SidebarTabs(
-            labels = buildList {
-                add("视频 ${videos.size}")
-                if (showCollectionsTab) {
-                    add(if (collectionsLoaded) "合集 ${collections.size}" else "合集")
-                }
-            },
+            labels = authorProfileTabLabels(
+                videoCount = videos.size,
+                collectionsLoaded = collectionsLoaded,
+                collectionCount = collections.size,
+            ),
             selectedIndex = activeTab,
             requesters = tabRequesters,
             downFocusRequester = when (activeTab) {
