@@ -113,6 +113,7 @@ private const val SEEK_STEP_MS = 5_000L
 private const val SEEK_FAST_STEP_MS = 10_000L
 private const val SEEK_REPEAT_INTERVAL_MS = 120L
 private const val SEEK_ACCELERATION_AFTER_MS = 1_200L
+private const val AUTHOR_PROFILE_ACTION_INDEX = 4
 
 @Composable
 fun ShortsScreen(
@@ -168,9 +169,10 @@ fun ShortsScreen(
     val chromeFocusRequester = remember { FocusRequester() }
     val bottomActionsFocusRequester = remember { FocusRequester() }
     val retryFocusRequester = remember { FocusRequester() }
-    var focusChromeRequested by remember { mutableStateOf(false) }
     var focusBottomActionsRequested by remember { mutableStateOf(false) }
-    var selectedBottomAction by remember { mutableIntStateOf(0) }
+    var selectedBottomAction by remember {
+        mutableIntStateOf(AUTHOR_PROFILE_ACTION_INDEX)
+    }
     val overlayInteractionSignals = remember { Channel<Unit>(Channel.CONFLATED) }
     var videoFocused by remember { mutableStateOf(false) }
     var chromeFocused by remember { mutableStateOf(false) }
@@ -369,6 +371,12 @@ fun ShortsScreen(
         if (current != null) onPrepareEngagement(current)
     }
 
+    LaunchedEffect(overlayVisible) {
+        if (overlayVisible) {
+            selectedBottomAction = AUTHOR_PROFILE_ACTION_INDEX
+        }
+    }
+
     LaunchedEffect(
         current?.id,
         overlayVisible,
@@ -426,27 +434,6 @@ fun ShortsScreen(
         onHideOverlay()
         withFrameNanos { }
         videoFocusRequester.requestFocus()
-    }
-
-    LaunchedEffect(
-        overlayVisible,
-        focusChromeRequested,
-        commentsVisible,
-        sidePanelVisible,
-        searchVisible,
-    ) {
-        if (
-            overlayVisible &&
-            focusChromeRequested &&
-            !commentsVisible &&
-            !sidePanelVisible &&
-            !searchVisible
-        ) {
-            withFrameNanos { }
-            delay(16)
-            chromeFocusRequester.requestFocus()
-            focusChromeRequested = false
-        }
     }
 
     LaunchedEffect(
@@ -568,7 +555,7 @@ fun ShortsScreen(
                     if (state.error != null) return@onPreviewKeyEvent false
                     if (overlayVisible) {
                         if (event.type == KeyEventType.KeyDown) {
-                            focusChromeRequested = true
+                            focusBottomActionsRequested = true
                         }
                         return@onPreviewKeyEvent true
                     }
@@ -591,7 +578,7 @@ fun ShortsScreen(
                                 onPrevious()
                             } else {
                                 onShowOverlay()
-                                focusChromeRequested = true
+                                focusBottomActionsRequested = true
                             }
                         }
 
@@ -605,7 +592,7 @@ fun ShortsScreen(
 
                         Key.Menu -> {
                             onShowOverlay()
-                            focusChromeRequested = true
+                            focusBottomActionsRequested = true
                         }
                         else -> Unit
                     }
