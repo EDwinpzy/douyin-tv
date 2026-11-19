@@ -179,6 +179,38 @@ data class VideoListResponse(
 )
 
 @Serializable
+data class SeriesListResponse(
+    val status_code: Int = 0,
+    val status_msg: String? = null,
+    val series_infos: List<SeriesInfoDto>? = null,
+    val cursor: Long = 0,
+    val max_cursor: Long = 0,
+    val has_more: Int = 0,
+    val total: Int = 0,
+)
+
+@Serializable
+data class SeriesInfoDto(
+    val series_id: String = "",
+    val series_name: String = "",
+    val desc: String = "",
+    val cover_url: UrlListDto? = null,
+    val horizontal_cover_url: UrlListDto? = null,
+    val stats: SeriesStatsDto? = null,
+    val statis: SeriesStatsDto? = null,
+)
+
+@Serializable
+data class SeriesStatsDto(
+    val play_vv: Long = 0,
+    val play_count: Long = 0,
+    val updated_to_episode: Int = 0,
+    val total_episode: Int = 0,
+    val current_episode: Int = 0,
+    val total: Int = 0,
+)
+
+@Serializable
 data class MixListResponse(
     val status_code: Int = 0,
     val status_msg: String? = null,

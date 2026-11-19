@@ -52,6 +52,7 @@ data class VideoPage(
     val videos: List<ShortVideo>,
     val cursor: Long,
     val hasMore: Boolean,
+    val source: CollectionSource = CollectionSource.UNKNOWN,
 )
 
 data class VideoCollection(
@@ -67,7 +68,14 @@ data class CollectionPage(
     val collections: List<VideoCollection>,
     val cursor: Long,
     val hasMore: Boolean,
+    val source: CollectionSource = CollectionSource.UNKNOWN,
 )
+
+enum class CollectionSource {
+    UNKNOWN,
+    SERIES,
+    MIX,
+}
 
 data class SearchPage(
     val videos: List<ShortVideo>,

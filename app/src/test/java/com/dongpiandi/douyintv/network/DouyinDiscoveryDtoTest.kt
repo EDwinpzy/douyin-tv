@@ -51,6 +51,81 @@ class DouyinDiscoveryDtoTest {
     }
 
     @Test
+    fun parsesAuthorSeriesListStatsAndCover() {
+        val response = json.decodeFromString<SeriesListResponse>(
+            """
+            {
+              "status_code": 0,
+              "has_more": 1,
+              "cursor": 18,
+              "total": 19,
+              "series_infos": [
+                {
+                  "series_id": "7701351606104623139",
+                  "series_name": "她好像是恋爱脑",
+                  "desc": "短剧合集",
+                  "cover_url": {
+                    "url_list": ["https://example.com/series-cover.webp"]
+                  },
+                  "stats": {
+                    "play_vv": 1500940,
+                    "updated_to_episode": 8,
+                    "total_episode": 8
+                  }
+                }
+              ]
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals(1, response.has_more)
+        assertEquals(18L, response.cursor)
+        assertEquals(19, response.total)
+        val series = response.series_infos.orEmpty().single()
+        assertEquals("7701351606104623139", series.series_id)
+        assertEquals("她好像是恋爱脑", series.series_name)
+        assertEquals(1500940L, series.stats?.play_vv)
+        assertEquals(8, series.stats?.updated_to_episode)
+        assertEquals(
+            "https://example.com/series-cover.webp",
+            series.cover_url?.url_list?.single(),
+        )
+    }
+
+    @Test
+    fun parsesSeriesAwemePage() {
+        val response = json.decodeFromString<VideoListResponse>(
+            """
+            {
+              "status_code": 0,
+              "has_more": 0,
+              "max_cursor": 20,
+              "aweme_list": [
+                {
+                  "aweme_id": "series-episode-1",
+                  "desc": "第一集",
+                  "author": {
+                    "nickname": "作者",
+                    "sec_uid": "MS4wLjABAAAA-series"
+                  },
+                  "video": {
+                    "play_addr": {
+                      "url_list": ["https://example.com/series-episode-1.mp4"]
+                    },
+                    "duration": 189910
+                  }
+                }
+              ]
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals(0, response.has_more)
+        assertEquals(20L, response.max_cursor)
+        assertEquals("series-episode-1", response.aweme_list.orEmpty().single().aweme_id)
+    }
+
+    @Test
     fun parsesPublicLikedVideosPage() {
         val response = json.decodeFromString<VideoListResponse>(
             """

@@ -260,7 +260,7 @@ fun DouyinTvApp(viewModel: MainViewModel) {
                 collectionsLoadingMore = state.authorVideos.collectionsLoadingMore,
                 collectionsError = state.authorVideos.collectionsError,
                 collectionsHasMore = state.authorVideos.collectionsHasMore,
-                openingCollectionId = state.authorVideos.openingCollectionId,
+                collectionDetail = state.authorVideos.openCollection,
                 currentVideoId = state.shorts.current?.id,
                 onClose = viewModel::closeAuthorVideos,
                 onTabSelected = viewModel::selectAuthorTab,
@@ -270,7 +270,11 @@ fun DouyinTvApp(viewModel: MainViewModel) {
                 onPlay = viewModel::playAuthorVideo,
                 onRetryCollections = viewModel::retryAuthorCollections,
                 onLoadMoreCollections = viewModel::loadMoreAuthorCollections,
-                onPlayCollection = viewModel::playAuthorCollection,
+                onOpenCollection = viewModel::openAuthorCollection,
+                onCloseCollection = viewModel::closeOpenCollection,
+                onRetryCollection = viewModel::retryOpenCollection,
+                onLoadMoreCollection = viewModel::loadMoreOpenCollection,
+                onPlayCollectionEpisode = viewModel::playAuthorCollectionEpisode,
                 restoreTab = sidebarReturn
                     ?.takeIf { it.kind == SidebarKind.AUTHOR }
                     ?.authorTab,

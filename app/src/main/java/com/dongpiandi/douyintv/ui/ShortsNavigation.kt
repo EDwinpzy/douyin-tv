@@ -32,10 +32,12 @@ internal fun authorSidebarVideoPlaybackReturn(videoId: String): SidebarPlaybackR
         videoId = videoId,
     )
 
-internal fun authorSidebarCollectionPlaybackReturn(
+internal fun authorSidebarCollectionEpisodePlaybackReturn(
     collectionId: String,
+    videoId: String,
 ): SidebarPlaybackReturn = SidebarPlaybackReturn(
     kind = SidebarKind.AUTHOR,
     authorTab = 1,
+    videoId = videoId,
     collectionId = collectionId,
 )
