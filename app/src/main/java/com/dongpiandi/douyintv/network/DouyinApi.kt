@@ -1100,9 +1100,12 @@ class DouyinApi(
 
     private fun cookieEntries(): LinkedHashMap<String, String> {
         val entries = linkedMapOf<String, String>()
-        parseCookieHeader(sessionStore.cookieHeader().orEmpty())
-            .forEach { (name, value) -> entries[name] = value }
-        parseCookieHeader(freshCookieHeader())
+        parseCookieHeader(
+            SessionCookie.mergeRuntime(
+                sessionStore.cookieHeader().orEmpty(),
+                freshCookieHeader(),
+            ).orEmpty(),
+        )
             .forEach { (name, value) -> entries[name] = value }
         return entries
     }
@@ -1171,7 +1174,12 @@ class DouyinApi(
     private fun persistResponseCookies(response: okhttp3.Response) {
         val rawCookies = response.headers.values("Set-Cookie")
         if (rawCookies.isEmpty()) return
-        val cookiePairs = rawCookies.mapNotNull { header ->
+        val runtimeCookies = rawCookies.filterNot { header ->
+            val name = header.substringBefore('=').trim()
+            SessionCookie.isLoginCookie(name)
+        }
+        if (runtimeCookies.isEmpty()) return
+        val cookiePairs = runtimeCookies.mapNotNull { header ->
             val first = header.substringBefore(';').trim()
             val separator = first.indexOf('=')
             if (separator <= 0) return@mapNotNull null
@@ -1180,9 +1188,9 @@ class DouyinApi(
             if (name.isBlank() || value.isBlank()) null else "$name=$value"
         }
         if (cookiePairs.isEmpty()) return
-        sessionStore.mergeCookieHeader(cookiePairs.joinToString("; "))
+        sessionStore.mergeRuntimeCookieHeader(cookiePairs.joinToString("; "))
         val cookieManager = CookieManager.getInstance()
-        rawCookies.forEach { header ->
+        runtimeCookies.forEach { header ->
             cookieManager.setCookie(DOUYIN_WEB_COOKIE_URL, header)
         }
         cookieManager.flush()

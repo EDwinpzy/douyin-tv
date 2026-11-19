@@ -268,8 +268,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val accountHistoryWriteTimes = mutableMapOf<String, Long>()
     private var lastAccountHistoryWriteAtMs = 0L
     private val playbackProgressWriteTimes = mutableMapOf<String, Long>()
-    private var sessionValidationJob: Job? = null
-    private var sessionGeneration = 0L
     private var lastProgressVideoId: String? = null
     private var lastProgressPositionMs = 0L
     private var lastProgressDurationMs = 0L
@@ -587,7 +585,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         TAG,
                         "follow toggle failed: ${error.message.orEmpty().take(160)}",
                     )
-                    clearInvalidSession(error)
+                    handleAuthenticationError(error)
                     _state.update {
                         it.copy(
                             follows = it.follows.copy(
@@ -648,7 +646,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         TAG,
                         "favorite toggle failed: ${error.message.orEmpty().take(160)}",
                     )
-                    clearInvalidSession(error)
+                    handleAuthenticationError(error)
                     _state.update {
                         it.copy(
                             favorites = it.favorites.copy(
@@ -710,7 +708,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         TAG,
                         "watch later toggle failed: ${error.message.orEmpty().take(160)}",
                     )
-                    clearInvalidSession(error)
+                    handleAuthenticationError(error)
                     _state.update {
                         it.copy(
                             watchLater = it.watchLater.copy(
@@ -1401,9 +1399,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun completeLogin(cookieHeader: String) {
         if (!sessionStore.saveCookieHeader(cookieHeader)) return
         CookieManager.getInstance().flush()
-        sessionGeneration += 1L
-        sessionValidationJob?.cancel()
-        sessionValidationJob = null
         lastSessionValidationAtMs = System.currentTimeMillis()
         invalidateAccountSession()
         accountHistoryWriteTimes.clear()
@@ -1533,14 +1528,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     }
                 }
-                .onFailure { error -> clearInvalidSession(error) }
+                .onFailure { error -> handleAuthenticationError(error) }
         }
     }
 
     fun logout() {
-        sessionGeneration += 1L
-        sessionValidationJob?.cancel()
-        sessionValidationJob = null
         invalidateAccountSession()
         sessionStore.clear()
         lastSessionValidationAtMs = 0L
@@ -1610,7 +1602,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 .onFailure { error ->
-                    clearInvalidSession(error)
+                    handleAuthenticationError(error)
                     _state.update {
                         it.copy(
                             favorites = it.favorites.copy(
@@ -1676,7 +1668,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 .onFailure { error ->
-                    clearInvalidSession(error)
+                    handleAuthenticationError(error)
                     _state.update {
                         it.copy(
                             watchLater = it.watchLater.copy(
@@ -1768,7 +1760,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     TAG,
                     "account history read failed: ${error.message.orEmpty().take(160)}",
                 )
-                clearInvalidSession(error)
+                handleAuthenticationError(error)
                 _state.update {
                     it.copy(
                         accountHistory = it.accountHistory.copy(
@@ -1882,7 +1874,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             "duration=$durationMs position=$persistedPosition: " +
                             error.message.orEmpty().take(160),
                     )
-                    clearInvalidSession(error)
+                    handleAuthenticationError(error)
                 }
         }
     }
@@ -1941,7 +1933,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         "account history write failed videoId=$videoId: " +
                             error.message.orEmpty().take(160),
                     )
-                    clearInvalidSession(error)
+                    handleAuthenticationError(error)
                 }
         }
     }
@@ -2001,7 +1993,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 .onFailure { error ->
-                    clearInvalidSession(error)
+                    handleAuthenticationError(error)
                     _state.update {
                         it.copy(
                             myProfile = it.myProfile.copy(
@@ -2598,77 +2590,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun Throwable.toDisplayMessage(fallback: String): String =
         message?.takeIf { it.isNotBlank() } ?: fallback
 
-    private fun clearInvalidSession(error: Throwable): Boolean {
+    private fun handleAuthenticationError(error: Throwable): Boolean {
         val message = error.message.orEmpty()
         if (!isAuthenticationRequiredMessage(message)) return false
 
-        Log.w(TAG, "session rejected once, scheduling verification")
-        refreshSessionFromWebView()
-        scheduleSessionRevalidation()
+        Log.w(
+            TAG,
+            "session rejected by endpoint; keeping stored session: " +
+                message.take(160),
+        )
         return true
-    }
-
-    private fun scheduleSessionRevalidation() {
-        if (sessionValidationJob?.isActive == true) return
-        val generation = sessionGeneration
-        sessionValidationJob = viewModelScope.launch {
-            delay(SESSION_RECHECK_DELAY_MS)
-            if (
-                generation != sessionGeneration ||
-                !sessionStore.hasSession()
-            ) {
-                return@launch
-            }
-            refreshSessionFromWebView()
-            val result = runCatching { api.loadSelfProfile() }
-            result.getOrNull()?.let { profile ->
-                lastSessionValidationAtMs = System.currentTimeMillis()
-                _state.update {
-                    it.copy(
-                        myProfile = it.myProfile.copy(
-                            profile = profile,
-                            loading = false,
-                            error = null,
-                        ),
-                    )
-                }
-                return@launch
-            }
-            val message = result.exceptionOrNull()?.message.orEmpty()
-            if (!isAuthenticationRequiredMessage(message)) {
-                Log.w(
-                    TAG,
-                    "session verification inconclusive: ${message.take(160)}",
-                )
-                return@launch
-            }
-            Log.w(TAG, "session verification confirmed logout")
-            sessionGeneration += 1L
-            invalidateAccountSession()
-            lastSessionValidationAtMs = 0L
-            accountHistoryWriteTimes.clear()
-            lastAccountHistoryWriteAtMs = 0L
-            playbackProgressWriteTimes.clear()
-            resetPreviousPlayback()
-            sessionStore.clear()
-            CookieManager.getInstance().removeAllCookies {
-                CookieManager.getInstance().flush()
-                _state.update {
-                    it.copy(
-                        isLoggedIn = false,
-                        loginVisible = false,
-                        favorites = FavoritesUiState(),
-                        watchLater = WatchLaterUiState(),
-                        accountHistory = AccountHistoryUiState(),
-                        history = progressStore.history(),
-                        follows = FollowUiState(),
-                        myProfile = MyProfileUiState(),
-                        authorVideos = AuthorVideosUiState(),
-                        search = SearchUiState(),
-                    )
-                }
-            }
-        }
     }
 
     private fun isAuthenticationRequiredMessage(message: String): Boolean =
@@ -2682,7 +2613,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (!sessionStore.hasSession()) return
         runCatching {
             val fresh = CookieManager.getInstance().getCookie(DOUYIN_WEB_COOKIE_URL)
-            if (sessionStore.mergeCookieHeader(fresh)) {
+            if (sessionStore.mergeRuntimeCookieHeader(fresh)) {
                 CookieManager.getInstance().flush()
             }
         }.onFailure { error ->
@@ -2701,7 +2632,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private companion object {
         const val SESSION_VALIDATION_INTERVAL_MS = 60_000L
-        const val SESSION_RECHECK_DELAY_MS = 1_500L
         const val DOUYIN_WEB_COOKIE_URL = "https://www.douyin.com"
         const val ACCOUNT_HISTORY_WRITE_CACHE_LIMIT = 500
         const val PLAYBACK_PROGRESS_WRITE_CACHE_LIMIT = 500

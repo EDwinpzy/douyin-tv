@@ -61,6 +61,29 @@ class SessionCookieTest {
     }
 
     @Test
+    fun runtimeMergeNeverOverwritesStoredLoginCookies() {
+        val merged = SessionCookie.mergeRuntime(
+            stored = "sessionid=valid; sid_tt=valid; UIFID=old-device",
+            fresh = "sessionid=stale; sid_tt=other; UIFID=new-device; ttwid=new",
+        )
+
+        assertEquals(
+            "sessionid=valid; sid_tt=valid; UIFID=new-device; ttwid=new",
+            merged,
+        )
+    }
+
+    @Test
+    fun runtimeMergeAddsSessionOnlyForFreshLogin() {
+        val merged = SessionCookie.mergeRuntime(
+            stored = "",
+            fresh = "sessionid=fresh; ttwid=new",
+        )
+
+        assertNull(merged)
+    }
+
+    @Test
     fun loginFingerprintIgnoresRotatingDeviceCookies() {
         val first = SessionCookie.loginSessionFingerprint(
             "sessionid=valid; ttwid=one; UIFID=old",

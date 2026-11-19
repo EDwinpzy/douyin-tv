@@ -51,6 +51,15 @@ class SessionStore(context: Context) {
         return saveCookieHeader(merged)
     }
 
+    @Synchronized
+    fun mergeRuntimeCookieHeader(freshCookieHeader: String?): Boolean {
+        if (freshCookieHeader.isNullOrBlank()) return false
+        val stored = cookieHeader().orEmpty()
+        val merged = SessionCookie.mergeRuntime(stored, freshCookieHeader) ?: return false
+        if (merged == stored) return false
+        return saveCookieHeader(merged)
+    }
+
     fun hasSession(): Boolean = cookieHeader() != null
 
     fun clear() {
