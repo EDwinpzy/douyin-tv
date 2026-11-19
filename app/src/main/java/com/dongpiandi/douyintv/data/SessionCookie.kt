@@ -15,10 +15,24 @@ internal object SessionCookie {
             name in sessionNames && value.isNotBlank()
         }
 
+    fun isLoginCookie(name: String): Boolean = name in sessionNames
+
     fun merge(stored: String, fresh: String): String? {
         val cookies = linkedMapOf<String, String>()
         parse(stored).forEach { (name, value) -> cookies[name] = value }
         parse(fresh).forEach { (name, value) -> cookies[name] = value }
+        val merged = cookies.entries.joinToString("; ") { (name, value) ->
+            "$name=$value"
+        }
+        return merged.takeIf(::hasSession)
+    }
+
+    fun mergeRuntime(stored: String, fresh: String): String? {
+        val cookies = linkedMapOf<String, String>()
+        parse(stored).forEach { (name, value) -> cookies[name] = value }
+        parse(fresh)
+            .filterNot { (name, _) -> name in sessionNames }
+            .forEach { (name, value) -> cookies[name] = value }
         val merged = cookies.entries.joinToString("; ") { (name, value) ->
             "$name=$value"
         }
