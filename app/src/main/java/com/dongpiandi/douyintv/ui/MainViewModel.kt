@@ -6,6 +6,7 @@ import android.webkit.CookieManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.dongpiandi.douyintv.DouyinTvApplication
+import com.dongpiandi.douyintv.model.CollectionSource
 import com.dongpiandi.douyintv.model.DanmakuMessage
 import com.dongpiandi.douyintv.model.LivePlayback
 import com.dongpiandi.douyintv.model.LiveRoom
@@ -149,6 +150,17 @@ data class AccountHistoryUiState(
     val hasMore: Boolean = false,
 )
 
+data class CollectionDetailUiState(
+    val collection: VideoCollection,
+    val videos: List<ShortVideo> = emptyList(),
+    val loading: Boolean = false,
+    val loadingMore: Boolean = false,
+    val error: String? = null,
+    val cursor: Long = 0,
+    val hasMore: Boolean = false,
+    val source: CollectionSource = CollectionSource.UNKNOWN,
+)
+
 data class FollowUiState(
     val statusByAuthor: Map<String, Boolean> = emptyMap(),
     val pendingAuthors: Set<String> = emptySet(),
@@ -186,7 +198,8 @@ data class AuthorVideosUiState(
     val collectionsError: String? = null,
     val collectionsCursor: Long = 0,
     val collectionsHasMore: Boolean = false,
-    val openingCollectionId: String? = null,
+    val collectionsSource: CollectionSource = CollectionSource.UNKNOWN,
+    val openCollection: CollectionDetailUiState? = null,
 )
 
 data class MyProfileUiState(
@@ -823,6 +836,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         likesProgress = progressStore.load(
                             it.authorVideos.likes.map(ShortVideo::id),
                         ),
+                        openCollection = null,
                     ),
                 )
             } else {
@@ -850,6 +864,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 overlayVisible = true,
                 authorVideos = it.authorVideos.copy(
                     visible = false,
+                    openCollection = null,
                 ),
                 sidebarPlaybackReturn = null,
             )
@@ -959,60 +974,140 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         loadAuthorCollectionsPage(reset = false)
     }
 
-    fun playAuthorCollection(collection: VideoCollection) {
+    fun openAuthorCollection(collection: VideoCollection) {
         val state = _state.value.authorVideos
         val authorSecUid = state.authorSecUid
-        if (authorSecUid.isBlank() || state.openingCollectionId != null) return
+        if (
+            authorSecUid.isBlank() ||
+            state.openCollection != null
+        ) {
+            return
+        }
         _state.update {
             it.copy(
                 authorVideos = it.authorVideos.copy(
-                    openingCollectionId = collection.id,
                     collectionsError = null,
+                    openCollection = CollectionDetailUiState(
+                        collection = collection,
+                    ),
                 ),
             )
         }
+        loadOpenCollectionPage(reset = true)
+    }
+
+    fun retryOpenCollection() {
+        loadOpenCollectionPage(reset = true)
+    }
+
+    fun loadMoreOpenCollection() {
+        loadOpenCollectionPage(reset = false)
+    }
+
+    fun closeOpenCollection() {
+        _state.update {
+            it.copy(
+                authorVideos = it.authorVideos.copy(
+                    openCollection = null,
+                ),
+            )
+        }
+    }
+
+    fun playAuthorCollectionEpisode(video: ShortVideo) {
+        val detail = _state.value.authorVideos.openCollection ?: return
+        if (detail.videos.none { it.id == video.id }) return
+        playCollectionVideo(
+            video = video,
+            sourceVideos = detail.videos,
+            source = ShortsSource.AUTHOR,
+            sidebarReturn = authorSidebarCollectionEpisodePlaybackReturn(
+                collectionId = detail.collection.id,
+                videoId = video.id,
+            ),
+        )
+    }
+
+    private fun loadOpenCollectionPage(reset: Boolean) {
+        val snapshot = _state.value.authorVideos
+        val detail = snapshot.openCollection ?: return
+        val authorSecUid = snapshot.authorSecUid
+        if (authorSecUid.isBlank()) return
+        if (detail.loading || detail.loadingMore) return
+        if (!reset && !detail.hasMore) return
+        val collectionId = detail.collection.id
+        val cursor = if (reset) 0L else detail.cursor
+        val source = if (reset) CollectionSource.UNKNOWN else detail.source
+        _state.update { current ->
+            val active = current.authorVideos.openCollection
+            if (active?.collection?.id != collectionId) {
+                current
+            } else {
+                current.copy(
+                    authorVideos = current.authorVideos.copy(
+                        openCollection = active.copy(
+                            videos = if (reset) emptyList() else active.videos,
+                            loading = reset,
+                            loadingMore = !reset,
+                            error = null,
+                            source = source,
+                        ),
+                    ),
+                )
+            }
+        }
         viewModelScope.launch {
             runCatching {
-                api.loadCollectionVideos(mixId = collection.id, cursor = 0)
+                api.loadCollectionVideos(
+                    mixId = collectionId,
+                    cursor = cursor,
+                    source = source,
+                )
             }
                 .onSuccess { page ->
-                    val firstVideo = page.videos.firstOrNull()
                     _state.update { current ->
-                        if (current.authorVideos.authorSecUid != authorSecUid) {
+                        val active = current.authorVideos.openCollection
+                        if (
+                            current.authorVideos.authorSecUid != authorSecUid ||
+                            active?.collection?.id != collectionId
+                        ) {
                             current
                         } else {
+                            val existing = if (reset) emptyList() else active.videos
+                            val merged = (existing + page.videos)
+                                .distinctBy(ShortVideo::id)
                             current.copy(
                                 authorVideos = current.authorVideos.copy(
-                                    openingCollectionId = null,
-                                    collectionsError = if (firstVideo == null) {
-                                        "该合集还没有可播放视频"
-                                    } else {
-                                        null
-                                    },
+                                    openCollection = active.copy(
+                                        videos = merged,
+                                        loading = false,
+                                        loadingMore = false,
+                                        error = null,
+                                        cursor = page.cursor,
+                                        hasMore = page.hasMore,
+                                        source = page.source,
+                                    ),
                                 ),
                             )
                         }
                     }
-                    if (firstVideo != null && _state.value.authorVideos.authorSecUid == authorSecUid) {
-                        playCollectionVideo(
-                            video = firstVideo,
-                            sourceVideos = page.videos,
-                            source = ShortsSource.AUTHOR,
-                            sidebarReturn = authorSidebarCollectionPlaybackReturn(
-                                collection.id,
-                            ),
-                        )
-                    }
                 }
                 .onFailure { error ->
                     _state.update { current ->
-                        if (current.authorVideos.authorSecUid != authorSecUid) {
+                        val active = current.authorVideos.openCollection
+                        if (
+                            current.authorVideos.authorSecUid != authorSecUid ||
+                            active?.collection?.id != collectionId
+                        ) {
                             current
                         } else {
                             current.copy(
                                 authorVideos = current.authorVideos.copy(
-                                    openingCollectionId = null,
-                                    collectionsError = error.toDisplayMessage("合集打开失败"),
+                                    openCollection = active.copy(
+                                        loading = false,
+                                        loadingMore = false,
+                                        error = error.toDisplayMessage("合集加载失败"),
+                                    ),
                                 ),
                             )
                         }
@@ -2286,6 +2381,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (snapshot.collectionsLoading || snapshot.collectionsLoadingMore) return
         if (!reset && !snapshot.collectionsHasMore) return
         val cursor = if (reset) 0L else snapshot.collectionsCursor
+        val source = if (reset) CollectionSource.UNKNOWN else snapshot.collectionsSource
         _state.update {
             it.copy(
                 authorVideos = it.authorVideos.copy(
@@ -2302,7 +2398,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch {
             runCatching {
-                api.loadAuthorCollections(authorSecUid = authorSecUid, cursor = cursor)
+                api.loadAuthorCollections(
+                    authorSecUid = authorSecUid,
+                    cursor = cursor,
+                    source = source,
+                )
             }
                 .onSuccess { page ->
                     _state.update { state ->
@@ -2325,6 +2425,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                     collectionsError = null,
                                     collectionsCursor = page.cursor,
                                     collectionsHasMore = page.hasMore,
+                                    collectionsSource = page.source,
                                 ),
                             )
                         }

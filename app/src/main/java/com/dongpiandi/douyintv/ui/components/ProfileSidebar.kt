@@ -30,6 +30,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed as lazyItemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -88,6 +90,7 @@ import com.dongpiandi.douyintv.model.UserProfile
 import com.dongpiandi.douyintv.model.VideoCollection
 import com.dongpiandi.douyintv.performance.LocalDevicePerformanceProfile
 import com.dongpiandi.douyintv.ui.AccountHistoryUiState
+import com.dongpiandi.douyintv.ui.CollectionDetailUiState
 import com.dongpiandi.douyintv.ui.MyHomeTab
 import com.dongpiandi.douyintv.ui.MyProfileUiState
 import com.dongpiandi.douyintv.ui.WatchLaterUiState
@@ -314,7 +317,7 @@ fun AuthorProfileSidebar(
     collectionsLoadingMore: Boolean,
     collectionsError: String?,
     collectionsHasMore: Boolean,
-    openingCollectionId: String?,
+    collectionDetail: CollectionDetailUiState?,
     currentVideoId: String? = null,
     onClose: () -> Unit,
     onTabSelected: (Int) -> Unit,
@@ -324,7 +327,11 @@ fun AuthorProfileSidebar(
     onPlay: (ShortVideo) -> Unit,
     onRetryCollections: () -> Unit,
     onLoadMoreCollections: () -> Unit,
-    onPlayCollection: (VideoCollection) -> Unit,
+    onOpenCollection: (VideoCollection) -> Unit,
+    onCloseCollection: () -> Unit,
+    onRetryCollection: () -> Unit,
+    onLoadMoreCollection: () -> Unit,
+    onPlayCollectionEpisode: (ShortVideo) -> Unit,
     restoreTab: Int? = null,
     restoreFocusVideoId: String? = null,
     restoreFocusCollectionId: String? = null,
@@ -338,6 +345,7 @@ fun AuthorProfileSidebar(
     val firstVideoFocusRequester = remember { FocusRequester() }
     val firstCollectionFocusRequester = remember { FocusRequester() }
     var pinnedCurrentVideoId by remember { mutableStateOf(currentVideoId) }
+    var collectionFocusAfterBack by remember { mutableStateOf<String?>(null) }
     val hasRestoreFocusTarget =
         restoreFocusVideoId != null || restoreFocusCollectionId != null
 
@@ -348,7 +356,7 @@ fun AuthorProfileSidebar(
     }
 
     LaunchedEffect(Unit) {
-        if (!hasRestoreFocusTarget) {
+        if (collectionDetail == null && !hasRestoreFocusTarget) {
             delay(80)
             tabRequesters.first().requestFocus()
         }
@@ -357,6 +365,23 @@ fun AuthorProfileSidebar(
         title = "@${profile?.nickname ?: fallbackName.ifBlank { "博主" }}的主页",
         onClose = onClose,
     ) {
+        if (collectionDetail != null) {
+            SidebarCollectionDetail(
+                detail = collectionDetail,
+                progressByVideoId = progressByVideoId,
+                currentVideoId = currentVideoId,
+                restoreFocusVideoId = restoreFocusVideoId,
+                onBack = {
+                    collectionFocusAfterBack = collectionDetail.collection.id
+                    onCloseCollection()
+                },
+                onRetry = onRetryCollection,
+                onLoadMore = onLoadMoreCollection,
+                onPlay = onPlayCollectionEpisode,
+                onFocusRestored = onFocusRestored,
+            )
+            return@SidebarFrame
+        }
         ProfileIdentity(
             name = profile?.nickname ?: fallbackName.ifBlank { "抖音创作者" },
             uniqueId = profile?.uniqueId.orEmpty(),
@@ -428,14 +453,16 @@ fun AuthorProfileSidebar(
                 loadingMore = collectionsLoadingMore,
                 error = collectionsError,
                 hasMore = collectionsHasMore,
-                openingCollectionId = openingCollectionId,
                 firstFocusRequester = firstCollectionFocusRequester,
                 upFocusRequester = tabRequesters.getOrNull(1),
-                focusTargetCollectionId = restoreFocusCollectionId,
-                onFocusTargetFocused = onFocusRestored,
+                focusTargetCollectionId = restoreFocusCollectionId ?: collectionFocusAfterBack,
+                onFocusTargetFocused = {
+                    collectionFocusAfterBack = null
+                    onFocusRestored()
+                },
                 onRetry = onRetryCollections,
                 onLoadMore = onLoadMoreCollections,
-                onPlay = onPlayCollection,
+                onOpen = onOpenCollection,
             )
         }
     }
@@ -745,20 +772,394 @@ private fun SidebarTab(
 }
 
 @Composable
+private fun SidebarCollectionDetail(
+    detail: CollectionDetailUiState,
+    progressByVideoId: Map<String, PlaybackProgress>,
+    currentVideoId: String?,
+    restoreFocusVideoId: String?,
+    onBack: () -> Unit,
+    onRetry: () -> Unit,
+    onLoadMore: () -> Unit,
+    onPlay: (ShortVideo) -> Unit,
+    onFocusRestored: () -> Unit,
+) {
+    BackHandler(onBack = onBack)
+    val backFocusRequester = remember { FocusRequester() }
+    val firstEpisodeFocusRequester = remember { FocusRequester() }
+    val targetFocusRequester = remember(restoreFocusVideoId) { FocusRequester() }
+    val listState = rememberLazyListState()
+    val targetIndex = detail.videos.indexOfFirst { it.id == restoreFocusVideoId }
+    val hasEpisodeFocusTarget =
+        detail.videos.isNotEmpty() || (detail.error != null && !detail.loading)
+    var initialFocusApplied by remember(detail.collection.id) {
+        mutableStateOf(false)
+    }
+
+    LaunchedEffect(detail.collection.id, detail.videos.size, restoreFocusVideoId) {
+        if (detail.videos.isEmpty() || initialFocusApplied) {
+            return@LaunchedEffect
+        }
+        val index = targetIndex.takeIf { it >= 0 } ?: 0
+        listState.scrollToItem(index)
+        withFrameNanos { }
+        delay(32)
+        val requester = if (targetIndex >= 0) {
+            targetFocusRequester
+        } else {
+            firstEpisodeFocusRequester
+        }
+        runCatching { requester.requestFocus() }
+            .onSuccess {
+                initialFocusApplied = true
+                if (restoreFocusVideoId != null) onFocusRestored()
+            }
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SidebarPillButton(
+                label = "返回合集",
+                focusRequester = backFocusRequester,
+                compact = true,
+                modifier = if (hasEpisodeFocusTarget) {
+                    Modifier.focusProperties { down = firstEpisodeFocusRequester }
+                } else {
+                    Modifier
+                },
+                onClick = onBack,
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                text = collectionEpisodeCountLabel(
+                    loaded = detail.videos.size,
+                    total = detail.collection.videoCount,
+                ),
+                color = TextSecondary,
+                style = MaterialTheme.typography.labelMedium.copy(
+                    fontSize = 9.5.sp,
+                    lineHeight = 12.sp,
+                ),
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(82.dp)
+                    .aspectRatio(16f / 9f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xFF11151E)),
+            ) {
+                detail.collection.coverUrl?.let { coverUrl ->
+                    AsyncImage(
+                        model = coverUrl,
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop,
+                    )
+                }
+            }
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = detail.collection.name,
+                    color = TextPrimary,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontSize = 11.5.sp,
+                        lineHeight = 14.sp,
+                    ),
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = "播放 ${formatCount(detail.collection.playCount)}",
+                    color = TextSecondary,
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontSize = 9.sp,
+                        lineHeight = 11.sp,
+                    ),
+                    maxLines = 1,
+                )
+            }
+        }
+        Spacer(Modifier.height(7.dp))
+        when {
+            detail.loading && detail.videos.isEmpty() -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        color = Accent,
+                        strokeWidth = 2.dp,
+                    )
+                }
+            }
+
+            detail.error != null && detail.videos.isEmpty() -> {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    Text(
+                        text = detail.error,
+                        color = TextSecondary,
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontSize = 11.sp,
+                            lineHeight = 14.sp,
+                        ),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    SidebarPillButton(
+                        label = "重试",
+                        focusRequester = firstEpisodeFocusRequester,
+                        onClick = onRetry,
+                    )
+                }
+            }
+
+            detail.videos.isEmpty() -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                ) {
+                    SidebarEmptyState("合集暂无视频")
+                }
+            }
+
+            else -> {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentPadding = PaddingValues(bottom = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    lazyItemsIndexed(
+                        items = detail.videos,
+                        key = { _, video -> video.id },
+                    ) { index, video ->
+                        val requester = remember(video.id) { FocusRequester() }
+                        SidebarEpisodeRow(
+                            index = index,
+                            total = detail.collection.videoCount,
+                            video = video,
+                            progress = progressByVideoId[video.id],
+                            playing = video.id == currentVideoId,
+                            focusRequester = when {
+                                video.id == restoreFocusVideoId -> targetFocusRequester
+                                detail.videos.firstOrNull()?.id == video.id ->
+                                    firstEpisodeFocusRequester
+                                else -> requester
+                            },
+                            upFocusRequester = backFocusRequester.takeIf { index == 0 },
+                            onPlay = { onPlay(video) },
+                        )
+                    }
+                    if (detail.error != null) {
+                        item(key = "collection-detail-error") {
+                            Text(
+                                text = detail.error,
+                                modifier = Modifier.padding(vertical = 5.dp),
+                                color = Accent,
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontSize = 10.5.sp,
+                                    lineHeight = 13.sp,
+                                ),
+                            )
+                        }
+                    }
+                    if (detail.hasMore) {
+                        item(key = "collection-detail-load-more") {
+                            LaunchedEffect(detail.videos.size, detail.hasMore) {
+                                if (!detail.loadingMore) onLoadMore()
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(40.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                if (detail.loadingMore) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(20.dp),
+                                        color = Accent,
+                                        strokeWidth = 2.dp,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SidebarEpisodeRow(
+    index: Int,
+    total: Int,
+    video: ShortVideo,
+    progress: PlaybackProgress?,
+    playing: Boolean,
+    focusRequester: FocusRequester,
+    upFocusRequester: FocusRequester?,
+    onPlay: () -> Unit,
+) {
+    var focused by remember { mutableStateOf(false) }
+    val rowShape = RoundedCornerShape(10.dp)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .glassSurface(
+                shape = rowShape,
+                style = GlassStyle(
+                    top = if (focused) Color(0xF03C2231) else Color(0xB81A2030),
+                    bottom = if (focused) Color(0xE01D0A13) else Color(0xA60C111B),
+                    border = if (focused) {
+                        Color.White.copy(alpha = 0.94f)
+                    } else {
+                        Color.White.copy(alpha = 0.12f)
+                    },
+                    sheen = Color.White.copy(alpha = if (focused) 0.15f else 0.055f),
+                    shadowAlpha = if (focused) 0.28f else 0.12f,
+                ),
+                elevation = if (focused) 7.dp else 2.dp,
+            )
+            .focusRequester(focusRequester)
+            .then(
+                if (upFocusRequester != null) {
+                    Modifier.focusProperties { up = upFocusRequester }
+                } else {
+                    Modifier
+                },
+            )
+            .onFocusChanged { focused = it.isFocused }
+            .focusable()
+            .onPreviewKeyEvent { event ->
+                if (
+                    (event.key == Key.DirectionCenter || event.key == Key.Enter) &&
+                    event.type == KeyEventType.KeyDown
+                ) {
+                    if (event.nativeKeyEvent.repeatCount == 0) onPlay()
+                    true
+                } else {
+                    false
+                }
+            }
+            .padding(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .width(104.dp)
+                .aspectRatio(16f / 9f)
+                .clip(RoundedCornerShape(7.dp))
+                .background(Color(0xFF11151E)),
+        ) {
+            video.coverUrl?.let { coverUrl ->
+                AsyncImage(
+                    model = coverUrl,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                )
+            }
+            if (playing) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.56f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "播放中",
+                        color = TextPrimary,
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontSize = 9.sp,
+                            lineHeight = 11.sp,
+                        ),
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.width(8.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = collectionEpisodeLabel(index = index, total = total),
+                color = if (playing) Accent else TextSecondary,
+                style = MaterialTheme.typography.labelMedium.copy(
+                    fontSize = 9.sp,
+                    lineHeight = 11.sp,
+                ),
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = video.description,
+                color = TextPrimary,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontSize = 10.5.sp,
+                    lineHeight = 13.sp,
+                ),
+                fontWeight = FontWeight.Medium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(3.dp))
+            Text(
+                text = buildString {
+                    append(formatDuration(progress?.durationMs ?: video.durationMs))
+                    val fraction = progress?.fraction ?: 0f
+                    if (fraction > 0.01f) {
+                        append(" · 已看 ")
+                        append((fraction * 100f).toInt().coerceIn(1, 100))
+                        append("%")
+                    }
+                },
+                color = TextSecondary,
+                style = MaterialTheme.typography.labelMedium.copy(
+                    fontSize = 9.sp,
+                    lineHeight = 11.sp,
+                ),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
 private fun SidebarCollectionList(
     collections: List<VideoCollection>,
     loading: Boolean,
     loadingMore: Boolean,
     error: String?,
     hasMore: Boolean,
-    openingCollectionId: String?,
     firstFocusRequester: FocusRequester? = null,
     upFocusRequester: FocusRequester? = null,
     focusTargetCollectionId: String? = null,
     onFocusTargetFocused: () -> Unit = {},
     onRetry: () -> Unit,
     onLoadMore: () -> Unit,
-    onPlay: (VideoCollection) -> Unit,
+    onOpen: (VideoCollection) -> Unit,
 ) {
     when {
         loading && collections.isEmpty() -> {
@@ -831,7 +1232,6 @@ private fun SidebarCollectionList(
                     val requester = remember(collection.id) { FocusRequester() }
                     SidebarCollectionCard(
                         collection = collection,
-                        opening = openingCollectionId == collection.id,
                         focusRequester = if (collection.id == collections.first().id) {
                             if (collection.id == focusTargetCollectionId) {
                                 targetFocusRequester
@@ -844,7 +1244,7 @@ private fun SidebarCollectionList(
                             requester
                         },
                         upFocusRequester = upFocusRequester,
-                        onPlay = { onPlay(collection) },
+                        onOpen = { onOpen(collection) },
                     )
                 }
                 if (error != null) {
@@ -895,10 +1295,9 @@ private fun SidebarCollectionList(
 @Composable
 private fun SidebarCollectionCard(
     collection: VideoCollection,
-    opening: Boolean,
     focusRequester: FocusRequester,
     upFocusRequester: FocusRequester? = null,
-    onPlay: () -> Unit,
+    onOpen: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
     val cardShape = RoundedCornerShape(12.dp)
@@ -935,7 +1334,7 @@ private fun SidebarCollectionCard(
                     (event.key == Key.DirectionCenter || event.key == Key.Enter) &&
                     event.type == KeyEventType.KeyDown
                 ) {
-                    if (event.nativeKeyEvent.repeatCount == 0 && !opening) onPlay()
+                    if (event.nativeKeyEvent.repeatCount == 0) onOpen()
                     true
                 } else {
                     false
@@ -986,20 +1385,6 @@ private fun SidebarCollectionCard(
                     lineHeight = 11.sp,
                 ),
             )
-            if (opening) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.55f)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(22.dp),
-                        color = Accent,
-                        strokeWidth = 2.dp,
-                    )
-                }
-            }
         }
         Column(
             modifier = Modifier.padding(horizontal = 7.dp, vertical = 6.dp),
@@ -1456,13 +1841,14 @@ private fun SidebarEmptyState(text: String) {
 private fun SidebarPillButton(
     label: String,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
     focusRequester: FocusRequester? = null,
     primary: Boolean = false,
     compact: Boolean = false,
 ) {
     var focused by remember { mutableStateOf(false) }
     Surface(
-        modifier = Modifier
+        modifier = modifier
             .then(
                 if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier,
             )

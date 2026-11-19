@@ -6,6 +6,7 @@ import com.dongpiandi.douyintv.data.DeviceIdentityStore
 import com.dongpiandi.douyintv.data.SessionCookie
 import com.dongpiandi.douyintv.data.SessionStore
 import com.dongpiandi.douyintv.model.CollectionPage
+import com.dongpiandi.douyintv.model.CollectionSource
 import com.dongpiandi.douyintv.model.CommentPage
 import com.dongpiandi.douyintv.model.DanmakuMessage
 import com.dongpiandi.douyintv.model.LivePlayback
@@ -654,9 +655,77 @@ class DouyinApi(
         authorSecUid: String,
         cursor: Long = 0,
         count: Int = 20,
+        source: CollectionSource = CollectionSource.UNKNOWN,
     ): CollectionPage = withContext(Dispatchers.IO) {
         if (authorSecUid.isBlank()) throw ApiException("作者信息不完整")
         ensureTtwid()
+        when (source) {
+            CollectionSource.SERIES ->
+                loadAuthorSeriesCollections(authorSecUid, cursor, count)
+            CollectionSource.MIX ->
+                loadAuthorMixCollections(authorSecUid, cursor, count)
+            CollectionSource.UNKNOWN -> {
+                val seriesPage = loadAuthorSeriesCollectionsOrNull(
+                    authorSecUid,
+                    cursor,
+                    count,
+                )
+                when {
+                    seriesPage != null && seriesPage.collections.isNotEmpty() -> seriesPage
+                    cursor <= 0L -> loadAuthorMixCollections(authorSecUid, cursor, count)
+                    seriesPage != null -> seriesPage
+                    else -> CollectionPage(emptyList(), cursor, false, CollectionSource.SERIES)
+                }
+            }
+        }
+    }
+
+    private suspend fun loadAuthorSeriesCollectionsOrNull(
+        authorSecUid: String,
+        cursor: Long,
+        count: Int,
+    ): CollectionPage? = try {
+        loadAuthorSeriesCollections(authorSecUid, cursor, count)
+    } catch (error: CancellationException) {
+        throw error
+    } catch (_: Exception) {
+        null
+    }
+
+    private suspend fun loadAuthorSeriesCollections(
+        authorSecUid: String,
+        cursor: Long,
+        count: Int,
+    ): CollectionPage {
+        val params = commonWebParams()
+            .add("sec_user_id", authorSecUid)
+            .add("cursor", cursor.coerceAtLeast(0))
+            .add("count", count.coerceIn(1, 20))
+            .add("req_from", "channel_pc_web")
+            .add("read_new_mix", "true")
+        val request = requestBuilder(
+            url = "$WEB_HOST/aweme/v1/web/series/list/?" + params.sign(signer),
+            referer = "$WEB_HOST/user/$authorSecUid?from_tab_name=main&showTab=collection",
+        ).get().build()
+        val response = json.decodeFromString<SeriesListResponse>(executeText(request))
+        if (response.status_code != 0) {
+            throw ApiException(
+                response.status_msg ?: "博主合集列表接口返回 ${response.status_code}",
+            )
+        }
+        return CollectionPage(
+            collections = response.series_infos.orEmpty().mapNotNull(::mapCollection),
+            cursor = response.cursor.takeIf { it > 0L } ?: response.max_cursor,
+            hasMore = response.has_more != 0,
+            source = CollectionSource.SERIES,
+        )
+    }
+
+    private suspend fun loadAuthorMixCollections(
+        authorSecUid: String,
+        cursor: Long,
+        count: Int,
+    ): CollectionPage {
         val params = commonWebParams()
             .add("sec_user_id", authorSecUid)
             .add("cursor", cursor.coerceAtLeast(0))
@@ -674,13 +743,14 @@ class DouyinApi(
         }
         val data = response.data
         val items = response.mix_infos.orEmpty() + data?.mix_infos.orEmpty()
-        CollectionPage(
+        return CollectionPage(
             collections = items.mapNotNull(::mapCollection),
             cursor = data?.max_cursor?.takeIf { it > 0L }
                 ?: data?.cursor?.takeIf { it > 0L }
                 ?: response.max_cursor.takeIf { it > 0L }
                 ?: response.cursor,
             hasMore = (data?.has_more ?: response.has_more) != 0,
+            source = CollectionSource.MIX,
         )
     }
 
@@ -688,9 +758,73 @@ class DouyinApi(
         mixId: String,
         cursor: Long = 0,
         count: Int = 20,
+        source: CollectionSource = CollectionSource.UNKNOWN,
     ): VideoPage = withContext(Dispatchers.IO) {
         if (mixId.isBlank()) throw ApiException("合集信息不完整")
         ensureTtwid()
+        when (source) {
+            CollectionSource.SERIES ->
+                loadSeriesCollectionVideos(mixId, cursor, count)
+            CollectionSource.MIX ->
+                loadMixCollectionVideos(mixId, cursor, count)
+            CollectionSource.UNKNOWN -> {
+                val seriesPage = loadSeriesCollectionVideosOrNull(mixId, cursor, count)
+                when {
+                    seriesPage != null && seriesPage.videos.isNotEmpty() -> seriesPage
+                    cursor <= 0L -> loadMixCollectionVideos(mixId, cursor, count)
+                    seriesPage != null -> seriesPage
+                    else -> VideoPage(emptyList(), cursor, false, CollectionSource.SERIES)
+                }
+            }
+        }
+    }
+
+    private suspend fun loadSeriesCollectionVideosOrNull(
+        seriesId: String,
+        cursor: Long,
+        count: Int,
+    ): VideoPage? = try {
+        loadSeriesCollectionVideos(seriesId, cursor, count)
+    } catch (error: CancellationException) {
+        throw error
+    } catch (_: Exception) {
+        null
+    }
+
+    private suspend fun loadSeriesCollectionVideos(
+        seriesId: String,
+        cursor: Long,
+        count: Int,
+    ): VideoPage {
+        val params = commonWebParams()
+            .add("series_id", seriesId)
+            .add("pull_type", 2)
+            .add("cursor", cursor.coerceAtLeast(0))
+            .add("count", count.coerceIn(1, 20))
+            .add("source", "playlet_homepage_hot")
+        val request = requestBuilder(
+            url = "$WEB_HOST/aweme/v1/web/series/aweme/?" + params.sign(signer),
+            referer = "$WEB_HOST/collection/$seriesId/1",
+        ).get().build()
+        val response = json.decodeFromString<VideoListResponse>(executeText(request))
+        if (response.status_code != 0) {
+            throw ApiException(
+                response.status_msg ?: "合集视频接口返回 ${response.status_code}",
+            )
+        }
+        return VideoPage(
+            videos = response.aweme_list.orEmpty().mapNotNull(::mapVideo),
+            cursor = response.max_cursor.takeIf { it > 0L } ?: response.cursor,
+            hasMore = response.has_more != 0,
+            source = CollectionSource.SERIES,
+        )
+    }
+
+    private suspend fun loadMixCollectionVideos(
+        mixId: String,
+        cursor: Long,
+        count: Int,
+    ): VideoPage {
         val params = commonWebParams()
             .add("mix_id", mixId)
             .add("cursor", cursor.coerceAtLeast(0))
@@ -705,10 +839,11 @@ class DouyinApi(
                 response.status_msg ?: "合集视频接口返回 ${response.status_code}",
             )
         }
-        VideoPage(
+        return VideoPage(
             videos = response.aweme_list.orEmpty().mapNotNull(::mapVideo),
             cursor = response.max_cursor.takeIf { it > 0L } ?: response.cursor,
             hasMore = response.has_more != 0,
+            source = CollectionSource.MIX,
         )
     }
 
@@ -1245,6 +1380,26 @@ class DouyinApi(
         } else {
             progress.coerceAtLeast(0L)
         }
+    }
+
+    private fun mapCollection(dto: SeriesInfoDto): VideoCollection? {
+        val seriesId = dto.series_id.trim()
+        if (seriesId.isBlank()) return null
+        val stats = dto.stats ?: dto.statis
+        val cover = dto.cover_url ?: dto.horizontal_cover_url
+        return VideoCollection(
+            id = seriesId,
+            name = dto.series_name.trim().ifBlank { "未命名合集" },
+            description = dto.desc.trim(),
+            coverUrl = cover?.url_list?.firstOrNull()?.let(::forceHttps),
+            videoCount = stats?.updated_to_episode?.takeIf { it > 0 }
+                ?: stats?.total_episode?.takeIf { it > 0 }
+                ?: stats?.total?.takeIf { it > 0 }
+                ?: 0,
+            playCount = stats?.play_vv?.takeIf { it > 0L }
+                ?: stats?.play_count
+                ?: 0L,
+        )
     }
 
     private fun mapCollection(dto: MixInfoDto): VideoCollection? {

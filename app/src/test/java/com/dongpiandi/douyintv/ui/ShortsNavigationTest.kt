@@ -83,14 +83,18 @@ class ShortsNavigationTest {
     }
 
     @Test
-    fun remembersCollectionCardForReturn() {
+    fun remembersCollectionEpisodeForReturn() {
         assertEquals(
             SidebarPlaybackReturn(
                 kind = SidebarKind.AUTHOR,
                 authorTab = 1,
+                videoId = "episode",
                 collectionId = "collection",
             ),
-            authorSidebarCollectionPlaybackReturn("collection"),
+            authorSidebarCollectionEpisodePlaybackReturn(
+                collectionId = "collection",
+                videoId = "episode",
+            ),
         )
     }
 
