@@ -278,6 +278,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val progressCommands = Channel<PlaybackProgressCommand>(capacity = 32)
     private var accountHistoryJob: Job? = null
     private var accountHistoryGeneration = 0L
+    private var collectionDetailJob: Job? = null
+    private var collectionDetailGeneration = 0L
     private val accountHistoryWriteTimes = mutableMapOf<String, Long>()
     private var lastAccountHistoryWriteAtMs = 0L
     private val playbackProgressWriteTimes = mutableMapOf<String, Long>()
@@ -819,6 +821,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openAuthorVideos(video: ShortVideo) {
         if (video.authorSecUid.isBlank()) return
+        cancelCollectionDetailRequest()
         val current = _state.value
         val sameAuthor = current.authorVideos.authorSecUid == video.authorSecUid
         _state.update {
@@ -859,6 +862,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun closeAuthorVideos() {
+        cancelCollectionDetailRequest()
         _state.update {
             it.copy(
                 overlayVisible = true,
@@ -983,6 +987,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         ) {
             return
         }
+        cancelCollectionDetailRequest()
         _state.update {
             it.copy(
                 authorVideos = it.authorVideos.copy(
@@ -1005,6 +1010,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun closeOpenCollection() {
+        cancelCollectionDetailRequest()
         _state.update {
             it.copy(
                 authorVideos = it.authorVideos.copy(
@@ -1028,6 +1034,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    private fun cancelCollectionDetailRequest() {
+        collectionDetailGeneration += 1
+        collectionDetailJob?.cancel()
+        collectionDetailJob = null
+    }
+
     private fun loadOpenCollectionPage(reset: Boolean) {
         val snapshot = _state.value.authorVideos
         val detail = snapshot.openCollection ?: return
@@ -1038,6 +1050,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val collectionId = detail.collection.id
         val cursor = if (reset) 0L else detail.cursor
         val source = if (reset) CollectionSource.UNKNOWN else detail.source
+        cancelCollectionDetailRequest()
+        val generation = collectionDetailGeneration
         _state.update { current ->
             val active = current.authorVideos.openCollection
             if (active?.collection?.id != collectionId) {
@@ -1056,7 +1070,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
         }
-        viewModelScope.launch {
+        collectionDetailJob = viewModelScope.launch {
             runCatching {
                 api.loadCollectionVideos(
                     mixId = collectionId,
@@ -1065,6 +1079,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
                 .onSuccess { page ->
+                    if (generation != collectionDetailGeneration) return@onSuccess
+                    collectionDetailJob = null
                     _state.update { current ->
                         val active = current.authorVideos.openCollection
                         if (
@@ -1093,6 +1109,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 .onFailure { error ->
+                    if (error is CancellationException) throw error
+                    if (generation != collectionDetailGeneration) return@onFailure
+                    collectionDetailJob = null
                     _state.update { current ->
                         val active = current.authorVideos.openCollection
                         if (

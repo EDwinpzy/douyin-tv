@@ -791,28 +791,48 @@ private fun SidebarCollectionDetail(
     val targetIndex = detail.videos.indexOfFirst { it.id == restoreFocusVideoId }
     val hasEpisodeFocusTarget =
         detail.videos.isNotEmpty() || (detail.error != null && !detail.loading)
-    var initialFocusApplied by remember(detail.collection.id) {
-        mutableStateOf(false)
-    }
+    var focusPhase by remember(detail.collection.id) { mutableStateOf("") }
 
-    LaunchedEffect(detail.collection.id, detail.videos.size, restoreFocusVideoId) {
-        if (detail.videos.isEmpty() || initialFocusApplied) {
-            return@LaunchedEffect
+    LaunchedEffect(
+        detail.collection.id,
+        detail.loading,
+        detail.error,
+        detail.videos.size,
+        restoreFocusVideoId,
+    ) {
+        val phase = when {
+            detail.videos.isNotEmpty() -> "list"
+            detail.loading -> "loading"
+            detail.error != null -> "error"
+            else -> "empty"
         }
-        val index = targetIndex.takeIf { it >= 0 } ?: 0
-        listState.scrollToItem(index)
-        withFrameNanos { }
-        delay(32)
-        val requester = if (targetIndex >= 0) {
-            targetFocusRequester
-        } else {
-            firstEpisodeFocusRequester
-        }
-        runCatching { requester.requestFocus() }
-            .onSuccess {
-                initialFocusApplied = true
-                if (restoreFocusVideoId != null) onFocusRestored()
+        if (phase == focusPhase) return@LaunchedEffect
+        if (phase == "list") {
+            val index = targetIndex.takeIf { it >= 0 } ?: 0
+            listState.scrollToItem(index)
+            withFrameNanos { }
+            delay(32)
+            val requester = if (targetIndex >= 0) {
+                targetFocusRequester
+            } else {
+                firstEpisodeFocusRequester
             }
+            runCatching { requester.requestFocus() }
+                .onSuccess {
+                    focusPhase = "list"
+                    if (restoreFocusVideoId != null) onFocusRestored()
+                }
+        } else {
+            withFrameNanos { }
+            delay(32)
+            val requester = if (phase == "error") {
+                firstEpisodeFocusRequester
+            } else {
+                backFocusRequester
+            }
+            runCatching { requester.requestFocus() }
+                .onSuccess { focusPhase = phase }
+        }
     }
 
     Column(Modifier.fillMaxSize()) {
