@@ -922,6 +922,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             sourceVideos = _state.value.authorVideos.videos,
             source = ShortsSource.AUTHOR,
             sidebarReturn = authorSidebarVideoPlaybackReturn(video.id),
+            reversePlaybackOrder = true,
         )
     }
 
@@ -974,7 +975,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 api.loadCollectionVideos(mixId = collection.id, cursor = 0)
             }
                 .onSuccess { page ->
-                    val firstVideo = page.videos.firstOrNull()
+                    val firstVideo = page.videos.lastOrNull()
                     _state.update { current ->
                         if (current.authorVideos.authorSecUid != authorSecUid) {
                             current
@@ -999,6 +1000,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             sidebarReturn = authorSidebarCollectionPlaybackReturn(
                                 collection.id,
                             ),
+                            reversePlaybackOrder = true,
                         )
                     }
                 }
@@ -2431,9 +2433,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         sourceVideos: List<ShortVideo>,
         source: ShortsSource,
         sidebarReturn: SidebarPlaybackReturn? = null,
+        reversePlaybackOrder: Boolean = false,
     ) {
-        val ordered = sourceVideos.ifEmpty { listOf(video) }
-        val index = ordered.indexOfFirst { it.id == video.id }.takeIf { it >= 0 } ?: 0
+        val queue = buildShortsPlaybackQueue(
+            video = video,
+            sourceVideos = sourceVideos,
+            reverseOrder = reversePlaybackOrder,
+        )
         val localProgress = progressStore.load(listOf(video.id))[video.id]
         val resumePosition = resumePositionMs(
             local = localProgress,
@@ -2456,8 +2462,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 ),
                 sidebarPlaybackReturn = sidebarReturn,
                 shorts = it.shorts.copy(
-                    videos = ordered,
-                    index = index,
+                    videos = queue.videos,
+                    index = queue.index,
                     page = 0,
                     source = source,
                     loading = false,

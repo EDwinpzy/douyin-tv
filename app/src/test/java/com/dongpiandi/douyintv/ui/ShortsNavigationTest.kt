@@ -94,6 +94,55 @@ class ShortsNavigationTest {
         )
     }
 
+    @Test
+    fun reversesAuthorPlaybackQueueAndKeepsSelection() {
+        val queue = buildShortsPlaybackQueue(
+            video = sampleVideo("b"),
+            sourceVideos = listOf(
+                sampleVideo("a"),
+                sampleVideo("b"),
+                sampleVideo("c"),
+            ),
+            reverseOrder = true,
+        )
+
+        assertEquals(listOf("c", "b", "a"), queue.videos.map(ShortVideo::id))
+        assertEquals(1, queue.index)
+    }
+
+    @Test
+    fun collectionStartsFromOriginalLastVideoWhenReversed() {
+        val videos = listOf(
+            sampleVideo("first"),
+            sampleVideo("middle"),
+            sampleVideo("last"),
+        )
+        val queue = buildShortsPlaybackQueue(
+            video = videos.last(),
+            sourceVideos = videos,
+            reverseOrder = true,
+        )
+
+        assertEquals("last", queue.videos.first().id)
+        assertEquals(0, queue.index)
+    }
+
+    @Test
+    fun preservesSourceOrderForOtherPlaybackQueues() {
+        val queue = buildShortsPlaybackQueue(
+            video = sampleVideo("b"),
+            sourceVideos = listOf(
+                sampleVideo("a"),
+                sampleVideo("b"),
+                sampleVideo("c"),
+            ),
+            reverseOrder = false,
+        )
+
+        assertEquals(listOf("a", "b", "c"), queue.videos.map(ShortVideo::id))
+        assertEquals(1, queue.index)
+    }
+
     private fun sampleVideo(id: String) = ShortVideo(
         id = id,
         description = id,
