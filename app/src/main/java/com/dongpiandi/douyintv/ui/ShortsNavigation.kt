@@ -1,9 +1,30 @@
 package com.dongpiandi.douyintv.ui
 
+import com.dongpiandi.douyintv.model.ShortVideo
+
 internal val ShortsSource.isSidebarPlayback: Boolean
     get() = this == ShortsSource.FAVORITES ||
         this == ShortsSource.WATCH_LATER ||
         this == ShortsSource.AUTHOR
+
+internal data class ShortsPlaybackQueue(
+    val videos: List<ShortVideo>,
+    val index: Int,
+)
+
+internal fun buildShortsPlaybackQueue(
+    video: ShortVideo,
+    sourceVideos: List<ShortVideo>,
+    reverseOrder: Boolean,
+): ShortsPlaybackQueue {
+    val videos = when {
+        sourceVideos.isEmpty() -> listOf(video)
+        reverseOrder -> sourceVideos.reversed()
+        else -> sourceVideos
+    }
+    val index = videos.indexOfFirst { it.id == video.id }.takeIf { it >= 0 } ?: 0
+    return ShortsPlaybackQueue(videos = videos, index = index)
+}
 
 internal fun recommendationReturnAfterPlayback(
     currentShorts: ShortsUiState,
